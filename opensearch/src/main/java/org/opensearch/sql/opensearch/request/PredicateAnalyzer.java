@@ -55,6 +55,8 @@ import java.util.Set;
 import org.apache.calcite.DataContext.Variable;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
+import org.apache.calcite.linq4j.tree.Expression;
+import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexBuilder;
@@ -82,6 +84,7 @@ import org.opensearch.sql.opensearch.data.type.OpenSearchTextType;
 import org.opensearch.sql.opensearch.storage.script.CalciteScriptEngine;
 import org.opensearch.sql.opensearch.storage.script.CalciteScriptEngine.ScriptInputGetter;
 import org.opensearch.sql.opensearch.storage.script.CalciteScriptEngine.UnsupportedScriptException;
+import org.opensearch.sql.opensearch.storage.serialization.KryoExpressionSerializer;
 
 /**
  * Query predicate analyzer. Uses visitor pattern to traverse existing expression and convert it to
@@ -973,7 +976,11 @@ public class PredicateAnalyzer {
           new JavaTypeFactoryImpl(rexBuilder.getTypeFactory().getTypeSystem());
       RexToLixTranslator.InputGetter getter =
           new ScriptInputGetter(typeFactory, rowType, fieldTypes);
-      this.code = CalciteScriptEngine.translate(rexBuilder, List.of(rexNode), getter, rowType);
+      KryoExpressionSerializer serializer = new KryoExpressionSerializer();
+      List<org.apache.calcite.linq4j.tree.Expression> expressions =  CalciteScriptEngine.translateToExpressions(rexBuilder, List.of(rexNode), getter, rowType);
+      org.apache.calcite.linq4j.tree.Expression expression = expressions.get(0); // For prototype sake, there is only one rexNode
+      this.code = serializer.serialize(expression);
+//      this.code = CalciteScriptEngine.translate(rexBuilder, List.of(rexNode), getter, rowType);
     }
 
     @Override
