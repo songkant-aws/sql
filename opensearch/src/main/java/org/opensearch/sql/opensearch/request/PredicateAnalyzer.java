@@ -979,6 +979,16 @@ public class PredicateAnalyzer {
       KryoExpressionSerializer serializer = new KryoExpressionSerializer();
       List<org.apache.calcite.linq4j.tree.Expression> expressions =  CalciteScriptEngine.translateToExpressions(rexBuilder, List.of(rexNode), getter, rowType);
       org.apache.calcite.linq4j.tree.Expression expression = expressions.get(0); // For prototype sake, there is only one rexNode
+      /*
+       * Kryo throws exception when serializing Linq4j FunctionExpression as follows:
+       * com.esotericsoftware.kryo.KryoException: java.lang.reflect.InaccessibleObjectException: Unable to make field private transient java.lang.reflect.Executable$ParameterData java.lang.reflect.Executable.parameterData accessible: module java.base does not "opens java.lang.reflect" to unnamed module @726a442a
+Serialization trace:
+method (org.apache.calcite.linq4j.tree.MethodCallExpression)
+expression (org.apache.calcite.linq4j.tree.UnaryExpression)
+initializer (org.apache.calcite.linq4j.tree.DeclarationStatement)
+statements (org.apache.calcite.linq4j.tree.BlockStatement)
+body (org.apache.calcite.linq4j.tree.FunctionExpression)
+       */
       this.code = serializer.serialize(expression);
 //      this.code = CalciteScriptEngine.translate(rexBuilder, List.of(rexNode), getter, rowType);
     }

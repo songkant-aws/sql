@@ -61,6 +61,7 @@ import org.apache.calcite.linq4j.tree.ParameterExpression;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexExecutable;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
@@ -338,35 +339,27 @@ public class CalciteScriptEngine implements ScriptEngine {
         Expressions.declare(16, root_, Expressions.convert_(root0_, DataContext.class)));
     SqlConformance conformance = SqlConformanceEnum.DEFAULT;
     RexProgram program = programBuilder.getProgram();
-    /*
-     * The result is a ParameterExpression, which is not expected. Ideally, we need to find a way of invoking implement(RexNode rexNode) to get interpretable Linq4j Expression
-     * TODO: Fix correct Expression translation from RexNode
-     */
-    return RexToLixTranslator.translateProjects(
-        program,
-        (JavaTypeFactory) javaTypeFactory,
-        conformance,
-        blockBuilder,
-        (BlockBuilder) null,
-        (PhysType) null,
-        root_,
-        getter,
-        (Function1) null);
-//    blockBuilder.add(
-//        Expressions.return_(
-//            (LabelTarget) null, Expressions.newArrayInit(Object[].class, expressions)));
-//    MethodDeclaration methodDecl =
-//        Expressions.methodDecl(
-//            1,
-//            Object[].class,
-//            BuiltInMethod.FUNCTION1_APPLY.method.getName(),
-//            ImmutableList.of(root0_),
-//            blockBuilder.toBlock());
-//    String code = Expressions.toString(methodDecl);
-//    if ((Boolean) CalciteSystemProperty.DEBUG.value()) {
-//      Util.debugCode(System.out, code);
-//    }
-//
-//    return code;
+
+//    // TODO: Fix correct translate RexNode to Expression, the commented logic misses inner RexCall logic
+//    RexToLixTranslator rexToLixTranslator =  RexToLixTranslator.forAggregation(javaTypeFactory, blockBuilder, getter, conformance);
+//    return rexToLixTranslator.translateList(constExps).stream()
+//        .map(expression -> (Expression) Expressions.lambda(expression, root_))
+//        .toList();
+
+    List<org.apache.calcite.linq4j.tree.Expression> expressions =
+        RexToLixTranslator.translateProjects(
+            program,
+            (JavaTypeFactory) javaTypeFactory,
+            conformance,
+            blockBuilder,
+            (BlockBuilder) null,
+            (PhysType) null,
+            root_,
+            getter,
+            (Function1) null);
+    blockBuilder.add(
+        Expressions.return_(
+            (LabelTarget) null, Expressions.newArrayInit(Object[].class, expressions)));
+    return ImmutableList.of(Expressions.lambda(blockBuilder.toBlock(), ImmutableList.of(root0_)));
   }
 }
