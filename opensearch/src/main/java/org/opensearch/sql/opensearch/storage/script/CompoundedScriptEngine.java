@@ -8,6 +8,7 @@ package org.opensearch.sql.opensearch.storage.script;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.apache.calcite.tools.FrameworkConfig;
 import org.opensearch.script.AggregationScript;
 import org.opensearch.script.FilterScript;
 import org.opensearch.script.ScriptContext;
@@ -18,7 +19,6 @@ import org.opensearch.sql.opensearch.storage.serialization.DefaultExpressionSeri
  * Custom expression script engine that supports using core engine expression code in DSL as a new
  * script language just like built-in Painless language.
  */
-@RequiredArgsConstructor
 public class CompoundedScriptEngine implements ScriptEngine {
 
   /** Expression script language name. */
@@ -30,7 +30,15 @@ public class CompoundedScriptEngine implements ScriptEngine {
 
   private static final ExpressionScriptEngine v2ExpressionScriptEngine =
       new ExpressionScriptEngine(new DefaultExpressionSerializer());
-  private static final CalciteScriptEngine calciteScriptEngine = new CalciteScriptEngine();
+
+  private final FrameworkConfig frameworkConfig;
+  private final CalciteScriptEngine calciteScriptEngine;
+
+  public CompoundedScriptEngine(FrameworkConfig frameworkConfig) {
+    this.frameworkConfig = frameworkConfig;
+
+    this.calciteScriptEngine = new CalciteScriptEngine(frameworkConfig);
+  }
 
   @Override
   public String getType() {

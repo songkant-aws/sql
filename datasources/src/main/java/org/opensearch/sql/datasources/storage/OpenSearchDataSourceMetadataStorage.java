@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -60,7 +61,8 @@ public class OpenSearchDataSourceMetadataStorage implements DataSourceMetadataSt
       "datasources-index-settings.yml";
   private static final Logger LOG = LogManager.getLogger();
   private final Client client;
-  private final ClusterService clusterService;
+//  private final ClusterService clusterService;
+  private final Supplier<Boolean> hasCreatedQlIndexSupplier;
 
   private final Encryptor encryptor;
   private final OpenSearchSettings settings;
@@ -79,7 +81,18 @@ public class OpenSearchDataSourceMetadataStorage implements DataSourceMetadataSt
       Encryptor encryptor,
       OpenSearchSettings settings) {
     this.client = client;
-    this.clusterService = clusterService;
+    this.hasCreatedQlIndexSupplier = () -> clusterService.state().routingTable().hasIndex(DATASOURCE_INDEX_NAME);
+    this.encryptor = encryptor;
+    this.settings = settings;
+  }
+
+  public OpenSearchDataSourceMetadataStorage(
+      Client client,
+      Supplier<Boolean> hasCreatedQlIndexSupplier,
+      Encryptor encryptor,
+      OpenSearchSettings settings) {
+    this.client = client;
+    this.hasCreatedQlIndexSupplier = hasCreatedQlIndexSupplier;
     this.encryptor = encryptor;
     this.settings = settings;
   }
@@ -89,7 +102,7 @@ public class OpenSearchDataSourceMetadataStorage implements DataSourceMetadataSt
     if (!isEnabled()) {
       return Collections.emptyList();
     }
-    if (!this.clusterService.state().routingTable().hasIndex(DATASOURCE_INDEX_NAME)) {
+    if (!this.hasCreatedQlIndexSupplier.get()) {
       createDataSourcesIndex();
       return Collections.emptyList();
     }
@@ -101,7 +114,7 @@ public class OpenSearchDataSourceMetadataStorage implements DataSourceMetadataSt
     if (!isEnabled()) {
       return Optional.empty();
     }
-    if (!this.clusterService.state().routingTable().hasIndex(DATASOURCE_INDEX_NAME)) {
+    if (!this.hasCreatedQlIndexSupplier.get()) {
       createDataSourcesIndex();
       return Optional.empty();
     }
@@ -118,7 +131,7 @@ public class OpenSearchDataSourceMetadataStorage implements DataSourceMetadataSt
       throw new IllegalStateException("Data source management is disabled");
     }
     encryptDecryptAuthenticationData(dataSourceMetadata, true);
-    if (!this.clusterService.state().routingTable().hasIndex(DATASOURCE_INDEX_NAME)) {
+    if (!this.hasCreatedQlIndexSupplier.get()) {
       createDataSourcesIndex();
     }
     IndexRequest indexRequest = new IndexRequest(DATASOURCE_INDEX_NAME);

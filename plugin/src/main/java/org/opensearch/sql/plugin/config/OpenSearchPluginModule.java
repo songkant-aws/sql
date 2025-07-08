@@ -5,15 +5,26 @@
 
 package org.opensearch.sql.plugin.config;
 
+import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.apache.calcite.jdbc.CalciteSchema;
+import org.apache.calcite.plan.RelTraitDef;
+import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.parser.SqlParser;
+import org.apache.calcite.tools.FrameworkConfig;
+import org.apache.calcite.tools.Frameworks;
+import org.apache.calcite.tools.Programs;
 import org.opensearch.common.inject.AbstractModule;
 import org.opensearch.common.inject.Provides;
 import org.opensearch.common.inject.Singleton;
 import org.opensearch.sql.analysis.Analyzer;
 import org.opensearch.sql.analysis.ExpressionAnalyzer;
+import org.opensearch.sql.calcite.OpenSearchSchema;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.executor.ExecutionEngine;
+import org.opensearch.sql.executor.OpenSearchTypeSystem;
 import org.opensearch.sql.executor.QueryManager;
 import org.opensearch.sql.executor.QueryService;
 import org.opensearch.sql.executor.execution.QueryPlanFactory;
@@ -106,5 +117,22 @@ public class OpenSearchPluginModule extends AbstractModule {
     QueryService queryService =
         new QueryService(analyzer, executionEngine, planner, dataSourceService, settings);
     return new QueryPlanFactory(queryService);
+  }
+
+  @Provides
+  public FrameworkConfig frameworkConfig(DataSourceService dataSourceService) {
+    // Use simple calcite schema since we don't compute tables in advance of the query.
+    final SchemaPlus rootSchema = CalciteSchema.createRootSchema(true, false).plus();
+    final SchemaPlus opensearchSchema =
+        rootSchema.add(
+            OpenSearchSchema.OPEN_SEARCH_SCHEMA_NAME, new OpenSearchSchema(dataSourceService));
+    Frameworks.ConfigBuilder configBuilder =
+        Frameworks.newConfigBuilder()
+            .parserConfig(SqlParser.Config.DEFAULT) // TODO check
+            .defaultSchema(opensearchSchema)
+            .traitDefs((List<RelTraitDef>) null)
+            .programs(Programs.calc(DefaultRelMetadataProvider.INSTANCE))
+            .typeSystem(OpenSearchTypeSystem.INSTANCE);
+    return configBuilder.build();
   }
 }

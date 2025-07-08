@@ -18,6 +18,14 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
+import org.apache.calcite.jdbc.CalciteSchema;
+import org.apache.calcite.plan.RelTraitDef;
+import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.parser.SqlParser;
+import org.apache.calcite.tools.FrameworkConfig;
+import org.apache.calcite.tools.Frameworks;
+import org.apache.calcite.tools.Programs;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -53,6 +61,7 @@ import org.opensearch.rest.RestHandler;
 import org.opensearch.script.ScriptContext;
 import org.opensearch.script.ScriptEngine;
 import org.opensearch.script.ScriptService;
+import org.opensearch.sql.calcite.OpenSearchSchema;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.datasources.auth.DataSourceUserAuthorizationHelper;
 import org.opensearch.sql.datasources.auth.DataSourceUserAuthorizationHelperImpl;
@@ -73,6 +82,7 @@ import org.opensearch.sql.datasources.transport.TransportDeleteDataSourceAction;
 import org.opensearch.sql.datasources.transport.TransportGetDataSourceAction;
 import org.opensearch.sql.datasources.transport.TransportPatchDataSourceAction;
 import org.opensearch.sql.datasources.transport.TransportUpdateDataSourceAction;
+import org.opensearch.sql.executor.OpenSearchTypeSystem;
 import org.opensearch.sql.legacy.esdomain.LocalClusterState;
 import org.opensearch.sql.legacy.executor.AsyncRestExecutor;
 import org.opensearch.sql.legacy.metrics.Metrics;
@@ -296,7 +306,21 @@ public class SQLPlugin extends Plugin
 
   @Override
   public ScriptEngine getScriptEngine(Settings settings, Collection<ScriptContext<?>> contexts) {
-    return new CompoundedScriptEngine();
+    DataSourceServiceImpl dataSourceService = createDataSourceServiceWithoutClusterService(settings);
+    // Use simple calcite schema since we don't compute tables in advance of the query.
+    final SchemaPlus rootSchema = CalciteSchema.createRootSchema(true, false).plus();
+    final SchemaPlus opensearchSchema =
+        rootSchema.add(
+            OpenSearchSchema.OPEN_SEARCH_SCHEMA_NAME, new OpenSearchSchema(dataSourceService));
+    Frameworks.ConfigBuilder configBuilder =
+        Frameworks.newConfigBuilder()
+            .parserConfig(SqlParser.Config.DEFAULT) // TODO check
+            .defaultSchema(opensearchSchema)
+            .traitDefs((List<RelTraitDef>) null)
+            .programs(Programs.calc(DefaultRelMetadataProvider.INSTANCE))
+            .typeSystem(OpenSearchTypeSystem.INSTANCE);
+    FrameworkConfig config = configBuilder.build();
+    return new CompoundedScriptEngine(config);
   }
 
   private DataSourceServiceImpl createDataSourceService() {
@@ -315,6 +339,39 @@ public class SQLPlugin extends Plugin
         new OpenSearchDataSourceMetadataStorage(
             client,
             clusterService,
+            new EncryptorImpl(masterKey),
+            (OpenSearchSettings) pluginSettings);
+    DataSourceUserAuthorizationHelper dataSourceUserAuthorizationHelper =
+        new DataSourceUserAuthorizationHelperImpl(client);
+    return new DataSourceServiceImpl(
+        new ImmutableSet.Builder<DataSourceFactory>()
+            .add(
+                new OpenSearchDataSourceFactory(
+                    new OpenSearchNodeClient(this.client), pluginSettings))
+            .add(new PrometheusStorageFactory(pluginSettings))
+            .add(new GlueDataSourceFactory(pluginSettings))
+            .add(new SecurityLakeDataSourceFactory(pluginSettings))
+            .build(),
+        dataSourceMetadataStorage,
+        dataSourceUserAuthorizationHelper);
+  }
+
+  private DataSourceServiceImpl createDataSourceServiceWithoutClusterService(Settings settings) {
+    String masterKey =
+        OpenSearchSettings.DATASOURCE_MASTER_SECRET_KEY.get(settings);
+    if (StringUtils.isEmpty(masterKey)) {
+      LOGGER.warn(
+          "Master key is a required config for using create and update datasource APIs. "
+              + "Please set plugins.query.datasources.encryption.masterkey config "
+              + "in opensearch.yml in all the cluster nodes. "
+              + "More details can be found here: "
+              + "https://github.com/opensearch-project/sql/blob/main/docs/user/ppl/"
+              + "admin/datasources.rst#master-key-config-for-encrypting-credential-information");
+    }
+    DataSourceMetadataStorage dataSourceMetadataStorage =
+        new OpenSearchDataSourceMetadataStorage(
+            client,
+            () -> true, // Assume .ql-datasources index creation is already checked during plugin load
             new EncryptorImpl(masterKey),
             (OpenSearchSettings) pluginSettings);
     DataSourceUserAuthorizationHelper dataSourceUserAuthorizationHelper =

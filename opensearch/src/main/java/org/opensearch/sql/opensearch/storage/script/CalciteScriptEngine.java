@@ -27,12 +27,14 @@
 
 package org.opensearch.sql.opensearch.storage.script;
 
+import static org.opensearch.sql.calcite.utils.OpenSearchTypeFactory.TYPE_FACTORY;
 import static org.opensearch.sql.data.type.ExprCoreType.FLOAT;
 import static org.opensearch.sql.data.type.ExprCoreType.INTEGER;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.lang.reflect.Type;
+import java.sql.Connection;
 import java.time.chrono.ChronoZonedDateTime;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +55,6 @@ import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
-import org.apache.calcite.linq4j.tree.FunctionExpression;
 import org.apache.calcite.linq4j.tree.LabelTarget;
 import org.apache.calcite.linq4j.tree.MethodCallExpression;
 import org.apache.calcite.linq4j.tree.MethodDeclaration;
@@ -61,14 +62,14 @@ import org.apache.calcite.linq4j.tree.ParameterExpression;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
-import org.apache.calcite.rex.RexCall;
-import org.apache.calcite.rex.RexExecutable;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.rex.RexProgramBuilder;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql.validate.SqlConformanceEnum;
+import org.apache.calcite.tools.FrameworkConfig;
+import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.Util;
 import org.apache.commons.lang3.StringUtils;
@@ -77,21 +78,30 @@ import org.opensearch.index.fielddata.ScriptDocValues;
 import org.opensearch.script.FilterScript;
 import org.opensearch.script.ScriptContext;
 import org.opensearch.script.ScriptEngine;
+import org.opensearch.sql.calcite.utils.CalciteToolsHelper;
 import org.opensearch.sql.data.model.ExprTimestampValue;
 import org.opensearch.sql.data.type.ExprCoreType;
 import org.opensearch.sql.data.type.ExprType;
 import org.opensearch.sql.opensearch.request.PredicateAnalyzer.NamedFieldExpression;
 import org.opensearch.sql.opensearch.storage.script.filter.CalciteFilterScriptFactory;
 import org.opensearch.sql.opensearch.storage.serialization.KryoExpressionSerializer;
+import org.opensearch.sql.opensearch.storage.serialization.RelJsonSerializer;
 
 /**
  * Custom expression script engine that supports using core engine expression code in DSL as a new
  * script language just like built-in Painless language.
  */
-@RequiredArgsConstructor
 public class CalciteScriptEngine implements ScriptEngine {
 
+  private final FrameworkConfig frameworkConfig;
+
   private KryoExpressionSerializer serializer = new KryoExpressionSerializer();
+  private RelJsonSerializer relJsonSerializer;
+
+  public CalciteScriptEngine(FrameworkConfig frameworkConfig) {
+    this.frameworkConfig = frameworkConfig;
+    this.relJsonSerializer = new RelJsonSerializer(frameworkConfig);
+  }
 
   /** Expression script language name. */
   public static final String CALCITE_LANG_NAME = "opensearch_calcite";
@@ -115,10 +125,17 @@ public class CalciteScriptEngine implements ScriptEngine {
 
     // TODO: Fix Kryo serialization or find other convenient serialization
     // It throws exception of com.esotericsoftware.kryo.KryoException: Class cannot be created (missing no-arg constructor): org.apache.calcite.linq4j.tree.Expression
-    Expression expression = serializer.deserialize(scriptCode);
+//    Expression expression = serializer.deserialize(scriptCode);
 
-    FunctionExpression funcExpression = (FunctionExpression) expression;
-    Function1<DataContext, Object[]> function = (Function1<DataContext, Object[]>) funcExpression.getFunction();
+//    FunctionExpression funcExpression = (FunctionExpression) expression;
+//    Function1<DataContext, Object[]> function = (Function1<DataContext, Object[]>) funcExpression.getFunction();
+
+    RexNode rexNode = relJsonSerializer.deserialize(scriptCode);
+
+    Connection conn = CalciteToolsHelper.connect(frameworkConfig, TYPE_FACTORY);
+    RelBuilder relBuilder = CalciteToolsHelper.create(frameworkConfig, TYPE_FACTORY, conn);
+
+
 
 //    Function1<DataContext, Object[]> function =
 //        new RexExecutable(scriptCode, "generated Rex code").getFunction();
