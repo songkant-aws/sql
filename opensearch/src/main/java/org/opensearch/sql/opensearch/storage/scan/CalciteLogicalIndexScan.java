@@ -92,7 +92,12 @@ public class CalciteLogicalIndexScan extends AbstractCalciteIndexScan {
       Map<String, ExprType> filedTypes = this.osIndex.getFieldTypes();
       QueryBuilder filterBuilder =
           PredicateAnalyzer.analyze(
-              filter.getCondition(), schema, filedTypes, getCluster().getRexBuilder(), rowType);
+              filter.getCondition(),
+              schema,
+              filedTypes,
+              getCluster().getRexBuilder(),
+              rowType,
+              getCluster());
       newScan.pushDownContext.add(
           PushDownAction.of(
               PushDownType.FILTER,

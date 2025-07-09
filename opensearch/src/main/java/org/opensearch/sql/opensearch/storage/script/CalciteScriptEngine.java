@@ -27,21 +27,18 @@
 
 package org.opensearch.sql.opensearch.storage.script;
 
-import static org.opensearch.sql.calcite.utils.OpenSearchTypeFactory.TYPE_FACTORY;
 import static org.opensearch.sql.data.type.ExprCoreType.FLOAT;
 import static org.opensearch.sql.data.type.ExprCoreType.INTEGER;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.lang.reflect.Type;
-import java.sql.Connection;
 import java.time.chrono.ChronoZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import lombok.RequiredArgsConstructor;
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.enumerable.EnumUtils;
 import org.apache.calcite.adapter.enumerable.PhysType;
@@ -55,6 +52,7 @@ import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
+import org.apache.calcite.linq4j.tree.FunctionExpression;
 import org.apache.calcite.linq4j.tree.LabelTarget;
 import org.apache.calcite.linq4j.tree.MethodCallExpression;
 import org.apache.calcite.linq4j.tree.MethodDeclaration;
@@ -78,7 +76,6 @@ import org.opensearch.index.fielddata.ScriptDocValues;
 import org.opensearch.script.FilterScript;
 import org.opensearch.script.ScriptContext;
 import org.opensearch.script.ScriptEngine;
-import org.opensearch.sql.calcite.utils.CalciteToolsHelper;
 import org.opensearch.sql.data.model.ExprTimestampValue;
 import org.opensearch.sql.data.type.ExprCoreType;
 import org.opensearch.sql.data.type.ExprType;
@@ -100,7 +97,7 @@ public class CalciteScriptEngine implements ScriptEngine {
 
   public CalciteScriptEngine(FrameworkConfig frameworkConfig) {
     this.frameworkConfig = frameworkConfig;
-    this.relJsonSerializer = new RelJsonSerializer(frameworkConfig);
+    this.relJsonSerializer = new RelJsonSerializer(RelBuilder.create(frameworkConfig).getCluster());
   }
 
   /** Expression script language name. */
@@ -124,21 +121,31 @@ public class CalciteScriptEngine implements ScriptEngine {
       String scriptName, String scriptCode, ScriptContext<T> context, Map<String, String> options) {
 
     // TODO: Fix Kryo serialization or find other convenient serialization
-    // It throws exception of com.esotericsoftware.kryo.KryoException: Class cannot be created (missing no-arg constructor): org.apache.calcite.linq4j.tree.Expression
-//    Expression expression = serializer.deserialize(scriptCode);
+    // It throws exception of com.esotericsoftware.kryo.KryoException: Class cannot be created
+    // (missing no-arg constructor): org.apache.calcite.linq4j.tree.Expression
+    //    Expression expression = serializer.deserialize(scriptCode);
 
-//    FunctionExpression funcExpression = (FunctionExpression) expression;
-//    Function1<DataContext, Object[]> function = (Function1<DataContext, Object[]>) funcExpression.getFunction();
+    //    FunctionExpression funcExpression = (FunctionExpression) expression;
+    //    Function1<DataContext, Object[]> function = (Function1<DataContext, Object[]>)
+    // funcExpression.getFunction();
 
-    RexNode rexNode = relJsonSerializer.deserialize(scriptCode);
+    Map<String, Object> objectMap = relJsonSerializer.deserialize(scriptCode);
+    RexNode rexNode = (RexNode) objectMap.get("expr");
+    RelDataType rowType = (RelDataType) objectMap.get("rowType");
+    Map<String, ExprType> fieldTypes = (Map<String, ExprType>) objectMap.get("fieldTypes");
 
-    Connection conn = CalciteToolsHelper.connect(frameworkConfig, TYPE_FACTORY);
-    RelBuilder relBuilder = CalciteToolsHelper.create(frameworkConfig, TYPE_FACTORY, conn);
+    JavaTypeFactoryImpl typeFactory =
+        new JavaTypeFactoryImpl(relJsonSerializer.getCluster().getTypeFactory().getTypeSystem());
+    RexToLixTranslator.InputGetter getter = new ScriptInputGetter(typeFactory, rowType, fieldTypes);
+    List<Expression> expressions =
+        CalciteScriptEngine.translateToExpressions(
+            relJsonSerializer.getCluster().getRexBuilder(), List.of(rexNode), getter, rowType);
+    Expression expression = expressions.get(0);
+    Function1<DataContext, Object[]> function =
+        (Function1<DataContext, Object[]>) ((FunctionExpression) expression).getFunction();
 
-
-
-//    Function1<DataContext, Object[]> function =
-//        new RexExecutable(scriptCode, "generated Rex code").getFunction();
+    //    Function1<DataContext, Object[]> function =
+    //        new RexExecutable(scriptCode, "generated Rex code").getFunction();
 
     if (CONTEXTS.containsKey(context)) {
       return context.factoryClazz.cast(CONTEXTS.get(context).apply(function));
@@ -328,9 +335,7 @@ public class CalciteScriptEngine implements ScriptEngine {
     return code;
   }
 
-  /**
-   * Prototype method to translate RexNode to Linq4j Expression
-   */
+  /** Prototype method to translate RexNode to Linq4j Expression */
   public static List<Expression> translateToExpressions(
       RexBuilder rexBuilder,
       List<RexNode> constExps,
@@ -357,11 +362,13 @@ public class CalciteScriptEngine implements ScriptEngine {
     SqlConformance conformance = SqlConformanceEnum.DEFAULT;
     RexProgram program = programBuilder.getProgram();
 
-//    // TODO: Fix correct translate RexNode to Expression, the commented logic misses inner RexCall logic
-//    RexToLixTranslator rexToLixTranslator =  RexToLixTranslator.forAggregation(javaTypeFactory, blockBuilder, getter, conformance);
-//    return rexToLixTranslator.translateList(constExps).stream()
-//        .map(expression -> (Expression) Expressions.lambda(expression, root_))
-//        .toList();
+    //    // TODO: Fix correct translate RexNode to Expression, the commented logic misses inner
+    // RexCall logic
+    //    RexToLixTranslator rexToLixTranslator =
+    // RexToLixTranslator.forAggregation(javaTypeFactory, blockBuilder, getter, conformance);
+    //    return rexToLixTranslator.translateList(constExps).stream()
+    //        .map(expression -> (Expression) Expressions.lambda(expression, root_))
+    //        .toList();
 
     List<org.apache.calcite.linq4j.tree.Expression> expressions =
         RexToLixTranslator.translateProjects(

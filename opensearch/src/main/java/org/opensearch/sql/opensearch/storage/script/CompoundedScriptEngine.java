@@ -7,7 +7,6 @@ package org.opensearch.sql.opensearch.storage.script;
 
 import java.util.Map;
 import java.util.Set;
-import lombok.RequiredArgsConstructor;
 import org.apache.calcite.tools.FrameworkConfig;
 import org.opensearch.script.AggregationScript;
 import org.opensearch.script.FilterScript;

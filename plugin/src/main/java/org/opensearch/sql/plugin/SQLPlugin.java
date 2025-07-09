@@ -306,7 +306,8 @@ public class SQLPlugin extends Plugin
 
   @Override
   public ScriptEngine getScriptEngine(Settings settings, Collection<ScriptContext<?>> contexts) {
-    DataSourceServiceImpl dataSourceService = createDataSourceServiceWithoutClusterService(settings);
+    DataSourceServiceImpl dataSourceService =
+        createDataSourceServiceWithoutClusterService(settings);
     // Use simple calcite schema since we don't compute tables in advance of the query.
     final SchemaPlus rootSchema = CalciteSchema.createRootSchema(true, false).plus();
     final SchemaPlus opensearchSchema =
@@ -357,8 +358,7 @@ public class SQLPlugin extends Plugin
   }
 
   private DataSourceServiceImpl createDataSourceServiceWithoutClusterService(Settings settings) {
-    String masterKey =
-        OpenSearchSettings.DATASOURCE_MASTER_SECRET_KEY.get(settings);
+    String masterKey = OpenSearchSettings.DATASOURCE_MASTER_SECRET_KEY.get(settings);
     if (StringUtils.isEmpty(masterKey)) {
       LOGGER.warn(
           "Master key is a required config for using create and update datasource APIs. "
@@ -371,7 +371,8 @@ public class SQLPlugin extends Plugin
     DataSourceMetadataStorage dataSourceMetadataStorage =
         new OpenSearchDataSourceMetadataStorage(
             client,
-            () -> true, // Assume .ql-datasources index creation is already checked during plugin load
+            () ->
+                true, // Assume .ql-datasources index creation is already checked during plugin load
             new EncryptorImpl(masterKey),
             (OpenSearchSettings) pluginSettings);
     DataSourceUserAuthorizationHelper dataSourceUserAuthorizationHelper =

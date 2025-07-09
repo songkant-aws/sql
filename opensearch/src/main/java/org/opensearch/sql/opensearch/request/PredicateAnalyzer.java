@@ -53,10 +53,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.apache.calcite.DataContext.Variable;
-import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
-import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
-import org.apache.calcite.linq4j.tree.Expression;
-import org.apache.calcite.linq4j.tree.Expressions;
+import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexBuilder;
@@ -81,10 +78,8 @@ import org.opensearch.sql.calcite.plan.OpenSearchConstants;
 import org.opensearch.sql.data.type.ExprType;
 import org.opensearch.sql.opensearch.data.type.OpenSearchDataType.MappingType;
 import org.opensearch.sql.opensearch.data.type.OpenSearchTextType;
-import org.opensearch.sql.opensearch.storage.script.CalciteScriptEngine;
-import org.opensearch.sql.opensearch.storage.script.CalciteScriptEngine.ScriptInputGetter;
 import org.opensearch.sql.opensearch.storage.script.CalciteScriptEngine.UnsupportedScriptException;
-import org.opensearch.sql.opensearch.storage.serialization.KryoExpressionSerializer;
+import org.opensearch.sql.opensearch.storage.serialization.RelJsonSerializer;
 
 /**
  * Query predicate analyzer. Uses visitor pattern to traverse existing expression and convert it to
@@ -141,7 +136,7 @@ public class PredicateAnalyzer {
   public static QueryBuilder analyze(
       RexNode expression, List<String> schema, Map<String, ExprType> filedTypes)
       throws ExpressionNotAnalyzableException {
-    return analyze(expression, schema, filedTypes, null, null);
+    return analyze(expression, schema, filedTypes, null, null, null);
   }
 
   public static QueryBuilder analyze(
@@ -149,13 +144,15 @@ public class PredicateAnalyzer {
       List<String> schema,
       Map<String, ExprType> filedTypes,
       RexBuilder rexBuilder,
-      RelDataType rowType)
+      RelDataType rowType,
+      RelOptCluster cluster)
       throws ExpressionNotAnalyzableException {
     requireNonNull(expression, "expression");
     try {
       // visits expression tree
       QueryExpression queryExpression =
-          (QueryExpression) expression.accept(new Visitor(schema, filedTypes, rexBuilder, rowType));
+          (QueryExpression)
+              expression.accept(new Visitor(schema, filedTypes, rexBuilder, rowType, cluster));
 
       if (queryExpression != null && queryExpression.isPartial()) {
         throw new UnsupportedOperationException(
@@ -163,7 +160,8 @@ public class PredicateAnalyzer {
       }
       return queryExpression != null ? queryExpression.builder() : null;
     } catch (PredicateAnalyzerException | UnsupportedOperationException e) {
-      return new ScriptQueryExpression(expression, rexBuilder, rowType, filedTypes).builder();
+      return new ScriptQueryExpression(expression, rexBuilder, rowType, filedTypes, cluster)
+          .builder();
     }
   }
 
@@ -174,17 +172,20 @@ public class PredicateAnalyzer {
     Map<String, ExprType> filedTypes;
     RexBuilder rexBuilder;
     RelDataType rowType;
+    RelOptCluster cluster;
 
     private Visitor(
         List<String> schema,
         Map<String, ExprType> filedTypes,
         RexBuilder rexBuilder,
-        RelDataType rowType) {
+        RelDataType rowType,
+        RelOptCluster cluster) {
       super(true);
       this.schema = schema;
       this.filedTypes = filedTypes;
       this.rexBuilder = rexBuilder;
       this.rowType = rowType;
+      this.cluster = cluster;
     }
 
     @Override
@@ -480,7 +481,7 @@ public class PredicateAnalyzer {
           try {
             expressions[i] =
                 new ScriptQueryExpression(
-                    call.getOperands().get(i), rexBuilder, rowType, filedTypes);
+                    call.getOperands().get(i), rexBuilder, rowType, filedTypes, cluster);
           } catch (UnsupportedScriptException ex) {
             if (call.getKind() == SqlKind.OR) throw ex;
             partial = true;
@@ -970,27 +971,35 @@ public class PredicateAnalyzer {
         RexNode rexNode,
         RexBuilder rexBuilder,
         RelDataType rowType,
-        Map<String, ExprType> fieldTypes) {
+        Map<String, ExprType> fieldTypes,
+        RelOptCluster cluster) {
       // Compile code when creating to detect exception as early as possible
-      JavaTypeFactoryImpl typeFactory =
-          new JavaTypeFactoryImpl(rexBuilder.getTypeFactory().getTypeSystem());
-      RexToLixTranslator.InputGetter getter =
-          new ScriptInputGetter(typeFactory, rowType, fieldTypes);
-      KryoExpressionSerializer serializer = new KryoExpressionSerializer();
-      List<org.apache.calcite.linq4j.tree.Expression> expressions =  CalciteScriptEngine.translateToExpressions(rexBuilder, List.of(rexNode), getter, rowType);
-      org.apache.calcite.linq4j.tree.Expression expression = expressions.get(0); // For prototype sake, there is only one rexNode
+      //      JavaTypeFactoryImpl typeFactory =
+      //          new JavaTypeFactoryImpl(rexBuilder.getTypeFactory().getTypeSystem());
+      //      RexToLixTranslator.InputGetter getter =
+      //          new ScriptInputGetter(typeFactory, rowType, fieldTypes);
+      //      KryoExpressionSerializer serializer = new KryoExpressionSerializer();
+      //      List<org.apache.calcite.linq4j.tree.Expression> expressions =
+      //          CalciteScriptEngine.translateToExpressions(rexBuilder, List.of(rexNode), getter,
+      // rowType);
+      //      org.apache.calcite.linq4j.tree.Expression expression =
+      //          expressions.get(0); // For prototype sake, there is only one rexNode
       /*
-       * Kryo throws exception when serializing Linq4j FunctionExpression as follows:
-       * com.esotericsoftware.kryo.KryoException: java.lang.reflect.InaccessibleObjectException: Unable to make field private transient java.lang.reflect.Executable$ParameterData java.lang.reflect.Executable.parameterData accessible: module java.base does not "opens java.lang.reflect" to unnamed module @726a442a
-Serialization trace:
-method (org.apache.calcite.linq4j.tree.MethodCallExpression)
-expression (org.apache.calcite.linq4j.tree.UnaryExpression)
-initializer (org.apache.calcite.linq4j.tree.DeclarationStatement)
-statements (org.apache.calcite.linq4j.tree.BlockStatement)
-body (org.apache.calcite.linq4j.tree.FunctionExpression)
-       */
-      this.code = serializer.serialize(expression);
-//      this.code = CalciteScriptEngine.translate(rexBuilder, List.of(rexNode), getter, rowType);
+             * Kryo throws exception when serializing Linq4j FunctionExpression as follows:
+             * com.esotericsoftware.kryo.KryoException: java.lang.reflect.InaccessibleObjectException: Unable to make field private transient java.lang.reflect.Executable$ParameterData java.lang.reflect.Executable.parameterData accessible: module java.base does not "opens java.lang.reflect" to unnamed module @726a442a
+      Serialization trace:
+      method (org.apache.calcite.linq4j.tree.MethodCallExpression)
+      expression (org.apache.calcite.linq4j.tree.UnaryExpression)
+      initializer (org.apache.calcite.linq4j.tree.DeclarationStatement)
+      statements (org.apache.calcite.linq4j.tree.BlockStatement)
+      body (org.apache.calcite.linq4j.tree.FunctionExpression)
+             */
+
+      RelJsonSerializer serializer = new RelJsonSerializer(cluster);
+
+      this.code = serializer.serialize(rexNode, rowType, fieldTypes);
+      //      this.code = CalciteScriptEngine.translate(rexBuilder, List.of(rexNode), getter,
+      // rowType);
     }
 
     @Override
