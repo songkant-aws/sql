@@ -128,8 +128,8 @@ public class QueryService {
                     buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
             RelNode relNode = analyze(plan, context);
             relNode = mergeAdjacentFilters(relNode);
-            RelNode validated = validate(relNode, context);
-            RelNode optimized = optimize(validated, context);
+//            RelNode validated = validate(relNode, context);
+            RelNode optimized = optimize(relNode, context);
             RelNode calcitePlan = convertToCalcitePlan(optimized);
             executionEngine.execute(calcitePlan, context, listener);
           } catch (Throwable t) {

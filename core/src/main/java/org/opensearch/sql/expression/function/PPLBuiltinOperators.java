@@ -21,6 +21,7 @@ import org.apache.calcite.adapter.enumerable.RexImpTable.RexCallImplementor;
 import org.apache.calcite.adapter.enumerable.RexToLixTranslator;
 import org.apache.calcite.avatica.util.TimeUnit;
 import org.apache.calcite.linq4j.tree.Expression;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlBasicCall;
@@ -475,7 +476,11 @@ public class PPLBuiltinOperators extends ReflectiveSqlOperatorTable {
       createUserDefinedAggFunction(
           LogPatternAggFunction.class,
           "pattern",
-          ReturnTypes.explicit(UserDefinedFunctionUtils.nullablePatternAggList),
+//          ReturnTypes.explicit(UserDefinedFunctionUtils.nullablePatternAggList),
+          (cx) -> {
+            List<RelDataType> types = cx.collectOperandTypes();
+            return UserDefinedFunctionUtils.nullablePatternAggList;
+          },
           UDFOperandMetadata.wrap(
               OperandTypes.VARIADIC)); // operand types of patterns are very flexible
   public static final SqlAggFunction LIST =

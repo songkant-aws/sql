@@ -3365,15 +3365,21 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       Boolean showNumberedToken) {
     List<RexNode> fattenedNodes = new ArrayList<>();
     List<String> projectNames = new ArrayList<>();
+
+    boolean isStructType = parsedNode.getType().getSqlTypeName() == SqlTypeName.ROW;
+
     // Flatten map struct fields
     RexNode patternExpr =
         context.rexBuilder.makeCast(
             context.rexBuilder.getTypeFactory().createSqlType(SqlTypeName.VARCHAR),
-            PPLFuncImpTable.INSTANCE.resolve(
-                context.rexBuilder,
-                BuiltinFunctionName.INTERNAL_ITEM,
-                parsedNode,
-                context.rexBuilder.makeLiteral(PatternUtils.PATTERN)),
+            isStructType
+                ? context.rexBuilder.makeFieldAccess(parsedNode, PatternUtils.PATTERN, false)
+                : PPLFuncImpTable.INSTANCE.resolve(context.rexBuilder, BuiltinFunctionName.INTERNAL_ITEM, parsedNode, context.rexBuilder.makeLiteral(PatternUtils.PATTERN)),
+//            PPLFuncImpTable.INSTANCE.resolve(
+//                context.rexBuilder,
+//                BuiltinFunctionName.INTERNAL_ITEM,
+//                parsedNode,
+//                context.rexBuilder.makeLiteral(PatternUtils.PATTERN)),
             true,
             true);
     fattenedNodes.add(context.relBuilder.alias(patternExpr, originalPatternResultAlias));
@@ -3382,11 +3388,14 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       RexNode patternCountExpr =
           context.rexBuilder.makeCast(
               context.rexBuilder.getTypeFactory().createSqlType(SqlTypeName.BIGINT),
-              PPLFuncImpTable.INSTANCE.resolve(
-                  context.rexBuilder,
-                  BuiltinFunctionName.INTERNAL_ITEM,
-                  parsedNode,
-                  context.rexBuilder.makeLiteral(PatternUtils.PATTERN_COUNT)),
+              isStructType
+                  ? context.rexBuilder.makeFieldAccess(parsedNode, PatternUtils.PATTERN_COUNT, false)
+                  : PPLFuncImpTable.INSTANCE.resolve(context.rexBuilder, BuiltinFunctionName.INTERNAL_ITEM, parsedNode, context.rexBuilder.makeLiteral(PatternUtils.PATTERN_COUNT)),
+//              PPLFuncImpTable.INSTANCE.resolve(
+//                  context.rexBuilder,
+//                  BuiltinFunctionName.INTERNAL_ITEM,
+//                  parsedNode,
+//                  context.rexBuilder.makeLiteral(PatternUtils.PATTERN_COUNT)),
               true,
               true);
       fattenedNodes.add(context.relBuilder.alias(patternCountExpr, PatternUtils.PATTERN_COUNT));
@@ -3396,11 +3405,14 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       RexNode tokensExpr =
           context.rexBuilder.makeCast(
               UserDefinedFunctionUtils.tokensMap,
-              PPLFuncImpTable.INSTANCE.resolve(
-                  context.rexBuilder,
-                  BuiltinFunctionName.INTERNAL_ITEM,
-                  parsedNode,
-                  context.rexBuilder.makeLiteral(PatternUtils.TOKENS)),
+              isStructType
+                  ? context.rexBuilder.makeFieldAccess(parsedNode, PatternUtils.TOKENS, false)
+                  : PPLFuncImpTable.INSTANCE.resolve(context.rexBuilder, BuiltinFunctionName.INTERNAL_ITEM, parsedNode, context.rexBuilder.makeLiteral(PatternUtils.TOKENS)),
+//              PPLFuncImpTable.INSTANCE.resolve(
+//                  context.rexBuilder,
+//                  BuiltinFunctionName.INTERNAL_ITEM,
+//                  parsedNode,
+//                  context.rexBuilder.makeLiteral(PatternUtils.TOKENS)),
               true,
               true);
       fattenedNodes.add(context.relBuilder.alias(tokensExpr, PatternUtils.TOKENS));
@@ -3414,11 +3426,14 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
                   .getTypeFactory()
                   .createArrayType(
                       context.rexBuilder.getTypeFactory().createSqlType(SqlTypeName.VARCHAR), -1),
-              PPLFuncImpTable.INSTANCE.resolve(
-                  context.rexBuilder,
-                  BuiltinFunctionName.INTERNAL_ITEM,
-                  explicitMapType(context, parsedNode, SqlTypeName.VARCHAR),
-                  context.rexBuilder.makeLiteral(PatternUtils.SAMPLE_LOGS)),
+              isStructType
+                  ? context.rexBuilder.makeFieldAccess(parsedNode, PatternUtils.SAMPLE_LOGS, false)
+                  : PPLFuncImpTable.INSTANCE.resolve(context.rexBuilder, BuiltinFunctionName.INTERNAL_ITEM, parsedNode, context.rexBuilder.makeLiteral(PatternUtils.SAMPLE_LOGS)),
+//              PPLFuncImpTable.INSTANCE.resolve(
+//                  context.rexBuilder,
+//                  BuiltinFunctionName.INTERNAL_ITEM,
+//                  explicitMapType(context, parsedNode, SqlTypeName.VARCHAR),
+//                  context.rexBuilder.makeLiteral(PatternUtils.SAMPLE_LOGS)),
               true,
               true);
       fattenedNodes.add(context.relBuilder.alias(sampleLogsExpr, PatternUtils.SAMPLE_LOGS));

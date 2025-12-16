@@ -1075,9 +1075,10 @@ public class PPLFuncImpTable {
       // of all operands.
       registerOperator(
           INTERNAL_ITEM,
-          SqlStdOperatorTable.ITEM,
-          OperandTypes.family(SqlTypeFamily.ARRAY, SqlTypeFamily.INTEGER)
-              .or(OperandTypes.family(SqlTypeFamily.MAP, SqlTypeFamily.ANY)));
+          SqlStdOperatorTable.ITEM
+//          OperandTypes.family(SqlTypeFamily.ARRAY, SqlTypeFamily.INTEGER)
+//              .or(OperandTypes.family(SqlTypeFamily.MAP, SqlTypeFamily.ANY))
+      );
       registerOperator(
           XOR,
           SqlStdOperatorTable.NOT_EQUALS,
