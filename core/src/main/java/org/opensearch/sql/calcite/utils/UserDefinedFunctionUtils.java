@@ -76,17 +76,6 @@ public class UserDefinedFunctionUtils {
       TYPE_FACTORY.createMapType(
           TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR),
           createArrayType(TYPE_FACTORY, TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR), false));
-  public static RelDataType patternElementStruct =
-      TYPE_FACTORY.createStructType(List.of(
-              TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR),
-              TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT),
-              tokensMap,
-              createArrayType(
-                  TYPE_FACTORY,
-                  TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR), false
-              ),
-              TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR)),
-          List.of("pattern", "pattern_count", "tokens", "sample_logs", "patterns_field"));
   public static RelDataType patternStruct =
       TYPE_FACTORY.createStructType(List.of(
               TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR),
@@ -98,6 +87,10 @@ public class UserDefinedFunctionUtils {
               )),
           List.of("pattern", "pattern_count", "tokens", "sample_logs"));
   public static RelDataType nullablePatternAggList = createArrayType(TYPE_FACTORY, patternStruct, true);
+  public static RelDataType patternUdfStruct = TYPE_FACTORY.createStructType(List.of(
+      TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR),
+      tokensMap
+  ), List.of("pattern", "tokens"));
   public static Set<String> SINGLE_FIELD_RELEVANCE_FUNCTION_SET =
       ImmutableSet.of("match", "match_phrase", "match_bool_prefix", "match_phrase_prefix");
   public static Set<String> MULTI_FIELDS_RELEVANCE_FUNCTION_SET =

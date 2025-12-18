@@ -46,7 +46,7 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
 
   @Override
   public SqlReturnTypeInference getReturnTypeInference() {
-    return ReturnTypes.explicit(UserDefinedFunctionUtils.patternStruct);
+    return ReturnTypes.explicit(UserDefinedFunctionUtils.patternUdfStruct);
   }
 
   @Override
@@ -81,12 +81,12 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
       }
 
       RelDataType componentType = inputType.getComponentType();
-      return (componentType.getSqlTypeName() == SqlTypeName.MAP)
+      return (componentType.getSqlTypeName() != SqlTypeName.VARCHAR)
           ? Types.lookupMethod(
               PatternParserFunctionImpl.class,
               "evalAgg",
               String.class,
-              Objects.class,
+              Object.class,
               Boolean.class)
           : getMethod(List.class, "evalSamples");
     }
@@ -108,7 +108,36 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
     if (Strings.isBlank(field) || aggObject == null) {
       return EMPTY_RESULT;
     }
-    List<Map<String, Object>> aggResult = (List<Map<String, Object>>) aggObject;
+//    List<Map<String, Object>> aggResult = (List<Map<String, Object>>) aggObject;
+//    List<String> preprocessedTokens =
+//        BrainLogParser.preprocess(
+//            field,
+//            BrainLogParser.DEFAULT_FILTER_PATTERN_VARIABLE_MAP,
+//            BrainLogParser.DEFAULT_DELIMITERS);
+//    List<List<String>> candidates =
+//        aggResult.stream()
+//            .map(m -> (String) m.get(PatternUtils.PATTERN))
+//            .map(pattern -> pattern.split(" "))
+//            .filter(splitPattern -> splitPattern.length == preprocessedTokens.size())
+//            .map(Arrays::asList)
+//            .toList();
+//    List<String> bestCandidate = findBestCandidate(candidates, preprocessedTokens);
+//
+//    if (bestCandidate != null) {
+//      String bestCandidatePattern = String.join(" ", bestCandidate);
+//      Map<String, List<String>> tokensMap = new HashMap<>();
+//      if (showNumberedToken) {
+//        ParseResult parseResult =
+//            PatternUtils.parsePattern(bestCandidatePattern, PatternUtils.TOKEN_PATTERN);
+//        PatternUtils.extractVariables(parseResult, field, tokensMap, PatternUtils.TOKEN_PREFIX);
+//      }
+//      return ImmutableMap.of(
+//          PatternUtils.PATTERN, bestCandidatePattern,
+//          PatternUtils.TOKENS, tokensMap);
+//    } else {
+//      return ImmutableMap.of();
+//    }
+    List<Object[]> aggResult = (List<Object[]>) aggObject;
     List<String> preprocessedTokens =
         BrainLogParser.preprocess(
             field,
@@ -116,7 +145,7 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
             BrainLogParser.DEFAULT_DELIMITERS);
     List<List<String>> candidates =
         aggResult.stream()
-            .map(m -> (String) m.get(PatternUtils.PATTERN))
+            .map(m -> (String) m[0])
             .map(pattern -> pattern.split(" "))
             .filter(splitPattern -> splitPattern.length == preprocessedTokens.size())
             .map(Arrays::asList)
@@ -131,9 +160,7 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
             PatternUtils.parsePattern(bestCandidatePattern, PatternUtils.TOKEN_PATTERN);
         PatternUtils.extractVariables(parseResult, field, tokensMap, PatternUtils.TOKEN_PREFIX);
       }
-      return ImmutableMap.of(
-          PatternUtils.PATTERN, bestCandidatePattern,
-          PatternUtils.TOKENS, tokensMap);
+      return new Object[] {bestCandidatePattern, tokensMap};
     } else {
       return ImmutableMap.of();
     }
@@ -148,11 +175,7 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
     Map<String, List<String>> tokensMap = new HashMap<>();
     ParseResult parseResult = PatternUtils.parsePattern(pattern, PatternUtils.WILDCARD_PATTERN);
     PatternUtils.extractVariables(parseResult, field, tokensMap, PatternUtils.WILDCARD_PREFIX);
-    return ImmutableMap.of(
-        PatternUtils.PATTERN,
-        parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX),
-        PatternUtils.TOKENS,
-        tokensMap);
+    return new Object[] {parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX), tokensMap};
   }
 
   public static Object evalSamples(
@@ -167,11 +190,7 @@ public class PatternParserFunctionImpl extends ImplementorUDF {
       PatternUtils.extractVariables(
           parseResult, sampleLog, tokensMap, PatternUtils.WILDCARD_PREFIX);
     }
-    return ImmutableMap.of(
-        PatternUtils.PATTERN,
-        parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX),
-        PatternUtils.TOKENS,
-        tokensMap);
+    return new Object[] {parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX), tokensMap};
   }
 
   private static List<String> findBestCandidate(

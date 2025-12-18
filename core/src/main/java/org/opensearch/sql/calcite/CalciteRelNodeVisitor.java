@@ -852,13 +852,10 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
                 .toList();
         context.relBuilder.aggregate(context.relBuilder.groupKey(groupByList), aggCall);
         buildExpandRelNode(
-            context.relBuilder.field(node.getAlias()), node.getAlias(), node.getAlias(), context);
-        flattenParsedPattern(
-            node.getAlias(),
-            context.relBuilder.field(node.getAlias()),
-            context,
-            true,
-            showNumberedToken);
+            context.relBuilder.field(node.getAlias()), node.getAlias(), PatternUtils.PATTERN, node.getAlias(), context);
+        if (!showNumberedToken) {
+          context.relBuilder.projectExcept(context.relBuilder.field(PatternUtils.TOKENS));
+        }
       }
     }
     return context.relBuilder.peek();
@@ -3179,7 +3176,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     RexInputRef arrayFieldRex = (RexInputRef) rexVisitor.analyze(arrayField, context);
     String alias = expand.getAlias();
 
-    buildExpandRelNode(arrayFieldRex, arrayField.getField().toString(), alias, context);
+    buildExpandRelNode(arrayFieldRex, arrayField.getField().toString(), arrayField.getField().toString(), alias, context);
 
     return context.relBuilder.peek();
   }
@@ -3442,8 +3439,26 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     projectPlusOverriding(fattenedNodes, projectNames, context);
   }
 
+  /**
+   * Expands an ARRAY-typed input field via a correlated (nested-loop) join
+   *
+   * <p>The resulting row type is composed of:
+   *   <ul>
+   *     <li>all original input fields, excluding the array field being expanded, and</li>
+   *     <li>the fields produced from unnesting the array elements</li>
+   *   </ul>
+   * </p>
+   *
+   * @param arrayFieldRex Input reference of the ARRAY field to be expanded
+   * @param arrayFieldName Field name for the projected ARRAY column used by the unnest side
+   * @param expandFieldName Field name of the expanded (unnested) element column to rename.
+   *                        Note: the target column must refer to the unnested output, not an outer
+   *                        field with the same name
+   * @param alias Alias to apply to the expanded column
+   * @param context RelNode planning context
+   */
   private void buildExpandRelNode(
-      RexInputRef arrayFieldRex, String arrayFieldName, String alias, CalcitePlanContext context) {
+      RexInputRef arrayFieldRex, String arrayFieldName, String expandFieldName, String alias, CalcitePlanContext context) {
     // 3. Capture the outer row in a CorrelationId
     Holder<RexCorrelVariable> correlVariable = Holder.empty();
     context.relBuilder.variable(correlVariable::set);
@@ -3483,9 +3498,15 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     if (alias != null) {
       // Sub-nested fields cannot be removed after renaming the nested field.
       tryToRemoveNestedFields(context);
-      RexInputRef expandedField = context.relBuilder.field(arrayFieldName);
+      // Calculate the expanded field index to be renamed
+      int rightOrdinal = rightNode.getRowType().getFieldNames().indexOf(expandFieldName);
+      if (rightOrdinal < 0) {
+        throw new IllegalArgumentException("No such field in array RexNode to be expanded: " + expandFieldName);
+      }
+      int leftOutCount = leftNode.getRowType().getFieldCount() - 1;
+      int expandedIndex = leftOutCount + rightOrdinal;
       List<String> names = new ArrayList<>(context.relBuilder.peek().getRowType().getFieldNames());
-      names.set(expandedField.getIndex(), alias);
+      names.set(expandedIndex, alias);
       context.relBuilder.rename(names);
     }
   }

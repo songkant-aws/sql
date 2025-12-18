@@ -5,7 +5,6 @@
 
 package org.opensearch.sql.calcite.udf.udaf;
 
-import com.google.common.collect.ImmutableMap;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -201,26 +200,33 @@ public class LogPatternAggFunction implements UserDefinedAggFunction<LogParserAc
                 String pattern = (String) m.get(PatternUtils.PATTERN);
                 Long count = (Long) m.get(PatternUtils.PATTERN_COUNT);
                 List<String> sampleLogs = (List<String>) m.get(PatternUtils.SAMPLE_LOGS);
-                Map<String, List<String>> tokensMap = new HashMap<>();
-                ParseResult parseResult = null;
+                Map<String, List<String>> tokensMap = Collections.EMPTY_MAP;
                 if (showToken) {
-                  parseResult = PatternUtils.parsePattern(pattern, PatternUtils.WILDCARD_PATTERN);
+                  tokensMap = new HashMap<>();
+                  ParseResult parseResult = PatternUtils.parsePattern(pattern, PatternUtils.WILDCARD_PATTERN);
                   for (String sampleLog : sampleLogs) {
                     PatternUtils.extractVariables(
                         parseResult, sampleLog, tokensMap, PatternUtils.WILDCARD_PREFIX);
                   }
+                  pattern = parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX);
                 }
-                return ImmutableMap.of(
-                    PatternUtils.PATTERN,
-                    showToken
-                        ? parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX)
-                        : pattern,
-                    PatternUtils.PATTERN_COUNT,
+//                return ImmutableMap.of(
+//                    PatternUtils.PATTERN,
+//                    showToken
+//                        ? parseResult.toTokenOrderString(PatternUtils.WILDCARD_PREFIX)
+//                        : pattern,
+//                    PatternUtils.PATTERN_COUNT,
+//                    count,
+//                    PatternUtils.TOKENS,
+//                    showToken ? tokensMap : Collections.EMPTY_MAP,
+//                    PatternUtils.SAMPLE_LOGS,
+//                    sampleLogs);
+                return new Object[]{
+                    pattern,
                     count,
-                    PatternUtils.TOKENS,
-                    showToken ? tokensMap : Collections.EMPTY_MAP,
-                    PatternUtils.SAMPLE_LOGS,
-                    sampleLogs);
+                    tokensMap,
+                    sampleLogs
+                };
               })
           .collect(Collectors.toList());
     }
