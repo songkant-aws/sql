@@ -23,6 +23,7 @@ import org.opensearch.sql.planner.physical.AggregationOperator;
 import org.opensearch.sql.planner.physical.DedupeOperator;
 import org.opensearch.sql.planner.physical.EvalOperator;
 import org.opensearch.sql.planner.physical.FilterOperator;
+import org.opensearch.sql.planner.physical.GraphLookupOperator;
 import org.opensearch.sql.planner.physical.LimitOperator;
 import org.opensearch.sql.planner.physical.NestedOperator;
 import org.opensearch.sql.planner.physical.PhysicalPlan;
@@ -92,6 +93,14 @@ public class Explain extends PhysicalPlanNodeVisitor<ExplainResponseNode, Object
 
   @Override
   public ExplainResponseNode visitTableScan(TableScanOperator node, Object context) {
+    return explain(
+        node,
+        context,
+        explainNode -> explainNode.setDescription(ImmutableMap.of("request", node.toString())));
+  }
+
+  @Override
+  public ExplainResponseNode visitGraphLookup(GraphLookupOperator node, Object context) {
     return explain(
         node,
         context,

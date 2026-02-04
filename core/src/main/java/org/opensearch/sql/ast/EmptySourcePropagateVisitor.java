@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import org.opensearch.sql.ast.tree.Append;
 import org.opensearch.sql.ast.tree.AppendCol;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Join;
 import org.opensearch.sql.ast.tree.Lookup;
 import org.opensearch.sql.ast.tree.Relation;
@@ -77,6 +78,15 @@ public class EmptySourcePropagateVisitor extends AbstractNodeVisitor<UnresolvedP
       return EMPTY_SOURCE;
     }
     return isEmptySource(lookupRelation) ? child : node;
+  }
+
+  @Override
+  public UnresolvedPlan visitGraphLookup(GraphLookup node, Void context) {
+    if (node.getChild().isEmpty()) {
+      return node;
+    }
+    UnresolvedPlan child = node.getChild().get(0).accept(this, context);
+    return isEmptySource(child) ? EMPTY_SOURCE : node;
   }
 
   // Not see use case yet

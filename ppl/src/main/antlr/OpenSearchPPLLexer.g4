@@ -217,6 +217,7 @@ YEAR_MONTH:                         'YEAR_MONTH';
 
 // DATASET TYPES
 LOOKUP:                             'LOOKUP';
+GRAPHLOOKUP:                        'GRAPHLOOKUP';
 
 // CONVERTED DATA TYPES
 INT:                                'INT';

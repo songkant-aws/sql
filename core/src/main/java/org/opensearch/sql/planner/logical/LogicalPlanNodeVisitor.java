@@ -100,6 +100,10 @@ public abstract class LogicalPlanNodeVisitor<R, C> {
     return visitNode(plan, context);
   }
 
+  public R visitGraphLookup(LogicalGraphLookup plan, C context) {
+    return visitNode(plan, context);
+  }
+
   public R visitAD(LogicalAD plan, C context) {
     return visitNode(plan, context);
   }

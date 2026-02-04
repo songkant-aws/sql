@@ -73,6 +73,7 @@ import org.opensearch.sql.ast.tree.FetchCursor;
 import org.opensearch.sql.ast.tree.FillNull;
 import org.opensearch.sql.ast.tree.Filter;
 import org.opensearch.sql.ast.tree.Flatten;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Head;
 import org.opensearch.sql.ast.tree.Join;
 import org.opensearch.sql.ast.tree.Kmeans;
@@ -124,6 +125,8 @@ import org.opensearch.sql.expression.function.BuiltinFunctionRepository;
 import org.opensearch.sql.expression.function.FunctionName;
 import org.opensearch.sql.expression.function.TableFunctionImplementation;
 import org.opensearch.sql.expression.parse.ParseExpression;
+import org.opensearch.sql.graph.GraphSearchRequest;
+import org.opensearch.sql.graph.GraphStorage;
 import org.opensearch.sql.planner.logical.LogicalAD;
 import org.opensearch.sql.planner.logical.LogicalAggregation;
 import org.opensearch.sql.planner.logical.LogicalCloseCursor;
@@ -131,6 +134,7 @@ import org.opensearch.sql.planner.logical.LogicalDedupe;
 import org.opensearch.sql.planner.logical.LogicalEval;
 import org.opensearch.sql.planner.logical.LogicalFetchCursor;
 import org.opensearch.sql.planner.logical.LogicalFilter;
+import org.opensearch.sql.planner.logical.LogicalGraphLookup;
 import org.opensearch.sql.planner.logical.LogicalLimit;
 import org.opensearch.sql.planner.logical.LogicalML;
 import org.opensearch.sql.planner.logical.LogicalMLCommons;
@@ -846,6 +850,27 @@ public class Analyzer extends AbstractNodeVisitor<LogicalPlan, AnalysisContext> 
   @Override
   public LogicalPlan visitLookup(Lookup node, AnalysisContext context) {
     throw getOnlyForCalciteException("Lookup");
+  }
+
+  @Override
+  public LogicalPlan visitGraphLookup(GraphLookup node, AnalysisContext context) {
+    if (!node.getChild().isEmpty()) {
+      throw new SemanticCheckException("Graph lookup with pipeline input requires Calcite engine");
+    }
+    GraphStorage graphStorage =
+        dataSourceService
+            .getDataSource(DEFAULT_DATASOURCE_NAME)
+            .getStorageEngine()
+            .graphStorage()
+            .orElseThrow(
+                () ->
+                    new SemanticCheckException(
+                        "Graph lookup is not supported by the current storage engine"));
+    GraphSearchRequest request = GraphSearchRequest.fromArguments(node.getArguments());
+    if (request.hasStartWithField()) {
+      request = request.withStartWiths(List.of(request.getStartWithField()));
+    }
+    return new LogicalGraphLookup(graphStorage, request);
   }
 
   @Override

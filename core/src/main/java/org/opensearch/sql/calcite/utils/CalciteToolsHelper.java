@@ -101,6 +101,7 @@ import org.apache.calcite.util.Util;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.plan.Scannable;
+import org.opensearch.sql.calcite.plan.rule.GraphLookupFilterPushdownRule;
 import org.opensearch.sql.calcite.plan.rule.OpenSearchRules;
 import org.opensearch.sql.calcite.plan.rule.PPLSimplifyDedupRule;
 import org.opensearch.sql.calcite.profile.PlanProfileBuilder;
@@ -447,7 +448,10 @@ public class CalciteToolsHelper {
 
   /** Try to optimize the plan by using HepPlanner */
   private static final List<RelOptRule> hepRuleList =
-      List.of(FilterMergeRule.Config.DEFAULT.toRule(), PPLSimplifyDedupRule.DEDUP_SIMPLIFY_RULE);
+      List.of(
+          FilterMergeRule.Config.DEFAULT.toRule(),
+          PPLSimplifyDedupRule.DEDUP_SIMPLIFY_RULE,
+          GraphLookupFilterPushdownRule.Config.DEFAULT.toRule());
 
   private static final HepProgram HEP_PROGRAM =
       new HepProgramBuilder().addRuleCollection(hepRuleList).build();

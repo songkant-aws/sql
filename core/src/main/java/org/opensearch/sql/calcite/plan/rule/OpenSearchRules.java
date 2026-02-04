@@ -14,9 +14,11 @@ public class OpenSearchRules {
       PPLAggregateConvertRule.Config.SUM_CONVERTER.toRule();
   public static final PPLAggGroupMergeRule AGG_GROUP_MERGE_RULE =
       PPLAggGroupMergeRule.Config.GROUP_MERGE.toRule();
+  public static final GraphLookupInputTraitRule GRAPH_LOOKUP_INPUT_TRAIT_RULE =
+      GraphLookupInputTraitRule.Config.DEFAULT.toRule();
 
   public static final List<RelOptRule> OPEN_SEARCH_OPT_RULES =
-      ImmutableList.of(AGGREGATE_CONVERT_RULE, AGG_GROUP_MERGE_RULE);
+      ImmutableList.of(AGGREGATE_CONVERT_RULE, AGG_GROUP_MERGE_RULE, GRAPH_LOOKUP_INPUT_TRAIT_RULE);
 
   // prevent instantiation
   private OpenSearchRules() {}

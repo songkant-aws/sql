@@ -77,6 +77,7 @@ import org.opensearch.sql.ast.tree.Expand;
 import org.opensearch.sql.ast.tree.FillNull;
 import org.opensearch.sql.ast.tree.Filter;
 import org.opensearch.sql.ast.tree.Flatten;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Head;
 import org.opensearch.sql.ast.tree.Join;
 import org.opensearch.sql.ast.tree.Lookup;
@@ -222,6 +223,19 @@ public class PPLQueryDataAnonymizer extends AbstractNodeVisitor<String, String> 
     String outputFields = formatFieldAlias(node.getOutputAliasMap());
     return StringUtils.format(
         "%s | lookup %s %s%s%s", child, MASK_TABLE, mappingFields, strategy, outputFields);
+  }
+
+  @Override
+  public String visitGraphLookup(GraphLookup node, String context) {
+    String args =
+        node.getArguments().entrySet().stream()
+            .map(entry -> String.format("%s=%s", entry.getKey(), MASK_LITERAL))
+            .collect(Collectors.joining(" "));
+    if (!node.getChild().isEmpty()) {
+      String child = node.getChild().get(0).accept(this, context);
+      return StringUtils.format("%s | graphlookup %s", child, args);
+    }
+    return StringUtils.format("graphlookup %s", args);
   }
 
   private String formatFieldAlias(java.util.Map<String, String> fieldMap) {

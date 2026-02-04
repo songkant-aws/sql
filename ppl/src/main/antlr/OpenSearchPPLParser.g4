@@ -47,6 +47,7 @@ pplCommands
    : describeCommand
    | showDataSourcesCommand
    | searchCommand
+   | graphLookupCommand
    | multisearchCommand
    ;
 
@@ -70,6 +71,7 @@ commands
    | spathCommand
    | patternsCommand
    | lookupCommand
+   | graphLookupCommand
    | kmeansCommand
    | adCommand
    | mlCommand
@@ -115,6 +117,7 @@ commandName
    | PARSE
    | PATTERNS
    | LOOKUP
+   | GRAPHLOOKUP
    | KMEANS
    | AD
    | ML
@@ -491,6 +494,20 @@ patternMode
 // lookup
 lookupCommand
    : LOOKUP tableSource lookupMappingList ((APPEND | REPLACE | OUTPUT) outputCandidateList)?
+   ;
+
+// graph lookup
+graphLookupCommand
+   : GRAPHLOOKUP graphLookupArgument+
+   ;
+
+graphLookupArgument
+   : argName = ident EQUAL argValue = graphLookupValue
+   ;
+
+graphLookupValue
+   : literalValue
+   | qualifiedName
    ;
 
 lookupMappingList
@@ -1677,4 +1694,3 @@ searchableKeyWord
    | COL
    | COLUMN_NAME
    ;
-

@@ -33,6 +33,7 @@ import org.opensearch.sql.ast.expression.WindowFunction;
 import org.opensearch.sql.ast.expression.Xor;
 import org.opensearch.sql.ast.tree.Aggregation;
 import org.opensearch.sql.ast.tree.Filter;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Limit;
 import org.opensearch.sql.ast.tree.Project;
 import org.opensearch.sql.ast.tree.Relation;
@@ -114,6 +115,11 @@ public class CanPaginateVisitor extends AbstractNodeVisitor<Boolean, Object> {
   // Queries with LIMIT/OFFSET clauses are unsupported
   @Override
   public Boolean visitLimit(Limit node, Object context) {
+    return Boolean.FALSE;
+  }
+
+  @Override
+  public Boolean visitGraphLookup(GraphLookup node, Object context) {
     return Boolean.FALSE;
   }
 

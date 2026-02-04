@@ -118,6 +118,7 @@ import org.opensearch.sql.ast.tree.FetchCursor;
 import org.opensearch.sql.ast.tree.FillNull;
 import org.opensearch.sql.ast.tree.Filter;
 import org.opensearch.sql.ast.tree.Flatten;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Head;
 import org.opensearch.sql.ast.tree.Join;
 import org.opensearch.sql.ast.tree.Kmeans;
@@ -151,6 +152,7 @@ import org.opensearch.sql.ast.tree.Values;
 import org.opensearch.sql.ast.tree.Window;
 import org.opensearch.sql.calcite.plan.AliasFieldsWrappable;
 import org.opensearch.sql.calcite.plan.OpenSearchConstants;
+import org.opensearch.sql.calcite.plan.rel.GraphLookupRel;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit.SystemLimitType;
 import org.opensearch.sql.calcite.utils.BinUtils;
@@ -168,6 +170,9 @@ import org.opensearch.sql.exception.SemanticCheckException;
 import org.opensearch.sql.expression.function.BuiltinFunctionName;
 import org.opensearch.sql.expression.function.PPLFuncImpTable;
 import org.opensearch.sql.expression.parse.RegexCommonUtils;
+import org.opensearch.sql.graph.GraphSearchRequest;
+import org.opensearch.sql.graph.GraphSearchSchema;
+import org.opensearch.sql.graph.GraphStorage;
 import org.opensearch.sql.utils.ParseUtils;
 import org.opensearch.sql.utils.WildcardRenameUtils;
 
@@ -1663,6 +1668,43 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
         sourceFieldsNames.size() - duplicatedSourceFields.size(),
         context);
 
+    return context.relBuilder.peek();
+  }
+
+  @Override
+  public RelNode visitGraphLookup(GraphLookup node, CalcitePlanContext context) {
+    boolean hasChild = !node.getChild().isEmpty();
+    RelNode input = null;
+    if (hasChild) {
+      visitChildren(node, context);
+      input = context.relBuilder.build();
+    }
+    GraphStorage graphStorage =
+        dataSourceService
+            .getDataSource(DataSourceSchemaIdentifierNameResolver.DEFAULT_DATASOURCE_NAME)
+            .getStorageEngine()
+            .graphStorage()
+            .orElseThrow(
+                () ->
+                    new SemanticCheckException(
+                        "Graph lookup is not supported by the current storage engine"));
+    GraphSearchRequest request = GraphSearchRequest.fromArguments(node.getArguments());
+    if (request.hasStartWithField() && !hasChild) {
+      // Treat identifier as literal when graphlookup has no input.
+      request = request.withStartWiths(List.of(request.getStartWithField()));
+    }
+    if (!request.hasStartWithField() && hasChild) {
+      throw new SemanticCheckException(
+          "graphlookup with input requires start_with to be a field reference");
+    }
+    GraphLookupRel rel =
+        new GraphLookupRel(
+            context.relBuilder.getCluster(),
+            input,
+            graphStorage,
+            request,
+            GraphSearchSchema.rowType(context.relBuilder.getTypeFactory()));
+    context.relBuilder.push(rel);
     return context.relBuilder.peek();
   }
 

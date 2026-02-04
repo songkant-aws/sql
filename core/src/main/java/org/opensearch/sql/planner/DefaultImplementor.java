@@ -12,6 +12,7 @@ import org.opensearch.sql.planner.logical.LogicalDedupe;
 import org.opensearch.sql.planner.logical.LogicalEval;
 import org.opensearch.sql.planner.logical.LogicalFetchCursor;
 import org.opensearch.sql.planner.logical.LogicalFilter;
+import org.opensearch.sql.planner.logical.LogicalGraphLookup;
 import org.opensearch.sql.planner.logical.LogicalLimit;
 import org.opensearch.sql.planner.logical.LogicalNested;
 import org.opensearch.sql.planner.logical.LogicalPaginate;
@@ -31,6 +32,7 @@ import org.opensearch.sql.planner.physical.CursorCloseOperator;
 import org.opensearch.sql.planner.physical.DedupeOperator;
 import org.opensearch.sql.planner.physical.EvalOperator;
 import org.opensearch.sql.planner.physical.FilterOperator;
+import org.opensearch.sql.planner.physical.GraphLookupOperator;
 import org.opensearch.sql.planner.physical.LimitOperator;
 import org.opensearch.sql.planner.physical.NestedOperator;
 import org.opensearch.sql.planner.physical.PhysicalPlan;
@@ -143,6 +145,11 @@ public class DefaultImplementor<C> extends LogicalPlanNodeVisitor<PhysicalPlan, 
           sortChild.getInput(), node.getLimit(), node.getOffset(), sortChild.getSortList());
     }
     return new LimitOperator(child, node.getLimit(), node.getOffset());
+  }
+
+  @Override
+  public PhysicalPlan visitGraphLookup(LogicalGraphLookup node, C context) {
+    return new GraphLookupOperator(node.getGraphStorage(), node.getRequest());
   }
 
   @Override

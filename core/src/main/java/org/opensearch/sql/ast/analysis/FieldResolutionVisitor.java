@@ -40,6 +40,7 @@ import org.opensearch.sql.ast.tree.Expand;
 import org.opensearch.sql.ast.tree.FillNull;
 import org.opensearch.sql.ast.tree.Filter;
 import org.opensearch.sql.ast.tree.Flatten;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Head;
 import org.opensearch.sql.ast.tree.Join;
 import org.opensearch.sql.ast.tree.Lookup;
@@ -69,6 +70,7 @@ import org.opensearch.sql.calcite.utils.WildcardUtils;
 import org.opensearch.sql.common.patterns.PatternUtils;
 import org.opensearch.sql.expression.parse.PatternsExpression;
 import org.opensearch.sql.expression.parse.RegexCommonUtils;
+import org.opensearch.sql.graph.GraphSearchRequest;
 
 /**
  * Visitor to analyze and collect required fields from PPL AST using stack-based traversal. The
@@ -527,6 +529,23 @@ public class FieldResolutionVisitor extends AbstractNodeVisitor<Node, FieldResol
   @Override
   public Node visitLookup(Lookup node, FieldResolutionContext context) {
     throw new IllegalArgumentException("Lookup command cannot be used together with spath command");
+  }
+
+  @Override
+  public Node visitGraphLookup(GraphLookup node, FieldResolutionContext context) {
+    if (node.getChild().isEmpty()) {
+      return node;
+    }
+    GraphSearchRequest request = GraphSearchRequest.fromArguments(node.getArguments());
+    if (request.hasStartWithField()) {
+      context.pushRequirements(
+          context.getCurrentRequirements().or(Set.of(request.getStartWithField())));
+      visitChildren(node, context);
+      context.popRequirements();
+      return node;
+    }
+    visitChildren(node, context);
+    return node;
   }
 
   @Override

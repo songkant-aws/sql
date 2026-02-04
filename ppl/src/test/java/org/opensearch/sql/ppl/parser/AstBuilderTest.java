@@ -75,8 +75,10 @@ import org.opensearch.sql.ast.expression.ParseMethod;
 import org.opensearch.sql.ast.expression.PatternMethod;
 import org.opensearch.sql.ast.expression.PatternMode;
 import org.opensearch.sql.ast.expression.SpanUnit;
+import org.opensearch.sql.ast.expression.UnresolvedExpression;
 import org.opensearch.sql.ast.tree.AD;
 import org.opensearch.sql.ast.tree.Chart;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Kmeans;
 import org.opensearch.sql.ast.tree.ML;
 import org.opensearch.sql.ast.tree.RareTopN.CommandType;
@@ -953,6 +955,20 @@ public class AstBuilderTest {
   @Test
   public void testKmeansCommandWithoutParameter() {
     assertEqual("source=t | kmeans", new Kmeans(relation("t"), ImmutableMap.of()));
+  }
+
+  @Test
+  public void testGraphLookupCommand() {
+    assertEqual(
+        "graphlookup from=edges start_with='n1' max_depth=2",
+        new GraphLookup(
+            ImmutableMap.<String, UnresolvedExpression>of(
+                "from",
+                stringLiteral("edges"),
+                "start_with",
+                stringLiteral("n1"),
+                "max_depth",
+                intLiteral(2))));
   }
 
   @Test

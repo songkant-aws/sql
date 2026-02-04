@@ -84,6 +84,7 @@ import org.opensearch.sql.ast.tree.Expand;
 import org.opensearch.sql.ast.tree.FillNull;
 import org.opensearch.sql.ast.tree.Filter;
 import org.opensearch.sql.ast.tree.Flatten;
+import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.Head;
 import org.opensearch.sql.ast.tree.Join;
 import org.opensearch.sql.ast.tree.Kmeans;
@@ -122,10 +123,12 @@ import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.common.setting.Settings.Key;
 import org.opensearch.sql.common.utils.StringUtils;
 import org.opensearch.sql.exception.SemanticCheckException;
+import org.opensearch.sql.graph.GraphSearchRequest;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.AdCommandContext;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.ByClauseContext;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.FieldListContext;
+import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.GraphLookupCommandContext;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.IdentsAsQualifiedNameSeqContext;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.KmeansCommandContext;
 import org.opensearch.sql.ppl.antlr.parser.OpenSearchPPLParser.LookupPairContext;
@@ -1123,6 +1126,31 @@ public class AstBuilder extends OpenSearchPPLParserBaseVisitor<UnresolvedPlan> {
               builder.put(x.argName.getText(), (Literal) internalVisitExpression(x.argValue));
             });
     return new ML(builder.build());
+  }
+
+  /** graphlookup command. */
+  @Override
+  public UnresolvedPlan visitGraphLookupCommand(GraphLookupCommandContext ctx) {
+    ImmutableMap.Builder<String, UnresolvedExpression> builder = ImmutableMap.builder();
+    ctx.graphLookupArgument()
+        .forEach(
+            arg -> {
+              UnresolvedExpression value;
+              if (arg.graphLookupValue().literalValue() != null) {
+                value = internalVisitExpression(arg.graphLookupValue().literalValue());
+              } else {
+                String argName = arg.argName.getText();
+                if (GraphSearchRequest.ARG_START_WITH.equalsIgnoreCase(argName)) {
+                  value = internalVisitExpression(arg.graphLookupValue().qualifiedName());
+                } else {
+                  value =
+                      new Literal(
+                          arg.graphLookupValue().qualifiedName().getText(), DataType.STRING);
+                }
+              }
+              builder.put(arg.argName.getText(), value);
+            });
+    return new GraphLookup(builder.build());
   }
 
   /** fillnull command. */

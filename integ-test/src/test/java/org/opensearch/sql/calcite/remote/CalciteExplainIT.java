@@ -5,6 +5,8 @@
 
 package org.opensearch.sql.calcite.remote;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.opensearch.sql.legacy.TestsConstants.TEST_INDEX_ACCOUNT;
 import static org.opensearch.sql.legacy.TestsConstants.TEST_INDEX_ALIAS;
 import static org.opensearch.sql.legacy.TestsConstants.TEST_INDEX_BANK;
@@ -27,12 +29,14 @@ import java.io.IOException;
 import java.util.Locale;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.opensearch.client.Request;
 import org.opensearch.sql.ast.statement.ExplainMode;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.common.setting.Settings.Key;
 import org.opensearch.sql.common.utils.StringUtils;
 import org.opensearch.sql.ppl.ExplainIT;
 import org.opensearch.sql.protocol.response.format.Format;
+import org.opensearch.sql.util.TestUtils;
 
 public class CalciteExplainIT extends ExplainIT {
   @Override
@@ -53,6 +57,8 @@ public class CalciteExplainIT extends ExplainIT {
     loadIndex(Index.DATA_TYPE_ALIAS);
     loadIndex(Index.DEEP_NESTED);
     loadIndex(Index.CASCADED_NESTED);
+
+    createGraphIndices();
   }
 
   @Override
@@ -206,6 +212,73 @@ public class CalciteExplainIT extends ExplainIT {
                     + "  ]"
                     + "| sort - salary | fields id, name, salary",
                 TEST_INDEX_WORKER, TEST_INDEX_WORK_INFORMATION)));
+  }
+
+  @Test
+  public void testGraphLookupPipelineExplain() throws IOException {
+    String query =
+        "source=graph_nodes | where id='A' | graphlookup from=graph_edges nodes=graph_nodes"
+            + " start_with=id max_depth=2 direction=out";
+    String result = explainQueryYaml(query);
+    assertThat(result, containsString("GraphLookup"));
+    assertThat(result, containsString("start_with_field=[id]"));
+  }
+
+  @Test
+  public void testGraphLookupFilterPushdownExplain() throws IOException {
+    String query =
+        "graphlookup from=graph_edges nodes=graph_nodes start_with='A' max_depth=2 direction=out "
+            + "| where edge_src='A' and node_id='D' and depth <= 1";
+    String result = explainQueryYaml(query);
+    assertThat(result, containsString("edge_filter=[src:\"A\"]"));
+    assertThat(result, containsString("node_filter=[id:\"D\"]"));
+    assertThat(result, containsString("max_depth=[1]"));
+  }
+
+  private void createGraphIndices() throws IOException {
+    String edgeMapping =
+        "{\"mappings\":{\"properties\":{"
+            + "\"src\":{\"type\":\"keyword\"},"
+            + "\"dst\":{\"type\":\"keyword\"},"
+            + "\"chunk_id\":{\"type\":\"keyword\"}"
+            + "}}}";
+    String nodeMapping =
+        "{\"mappings\":{\"properties\":{"
+            + "\"id\":{\"type\":\"keyword\"},"
+            + "\"chunk_id\":{\"type\":\"keyword\"}"
+            + "}}}";
+
+    if (!TestUtils.isIndexExist(client(), "graph_edges")) {
+      TestUtils.createIndexByRestClient(client(), "graph_edges", edgeMapping);
+    }
+    if (!TestUtils.isIndexExist(client(), "graph_nodes")) {
+      TestUtils.createIndexByRestClient(client(), "graph_nodes", nodeMapping);
+    }
+
+    indexEdge("1", "A", "B", "e1");
+    indexEdge("2", "A", "C", "e2");
+    indexEdge("3", "B", "D", "e3");
+    indexEdge("4", "C", "D", "e4");
+
+    indexNode("A", "chunk_A");
+    indexNode("B", "chunk_B");
+    indexNode("C", "chunk_C");
+    indexNode("D", "chunk_D");
+  }
+
+  private void indexEdge(String id, String src, String dst, String chunkId) throws IOException {
+    Request request = new Request("PUT", "/graph_edges/_doc/" + id + "?refresh=true");
+    request.setJsonEntity(
+        String.format(
+            Locale.ROOT, "{\"src\":\"%s\",\"dst\":\"%s\",\"chunk_id\":\"%s\"}", src, dst, chunkId));
+    client().performRequest(request);
+  }
+
+  private void indexNode(String id, String chunkId) throws IOException {
+    Request request = new Request("PUT", "/graph_nodes/_doc/" + id + "?refresh=true");
+    request.setJsonEntity(
+        String.format(Locale.ROOT, "{\"id\":\"%s\",\"chunk_id\":\"%s\"}", id, chunkId));
+    client().performRequest(request);
   }
 
   @Test
