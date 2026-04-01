@@ -210,6 +210,8 @@ public class OpenSearchJsonContent implements Content {
   private boolean parseBooleanValue(JsonNode node) {
     if (node.isBoolean()) {
       return node.booleanValue();
+    } else if (node.isNumber()) {
+      return node.intValue() != 0;
     } else if (node.isTextual()) {
       return Boolean.parseBoolean(node.textValue());
     } else {

@@ -43,8 +43,14 @@ public class OpenSearchDataType implements ExprType, Serializable {
     ScaledFloat("scaled_float", ExprCoreType.DOUBLE),
     Double("double", ExprCoreType.DOUBLE),
     Boolean("boolean", ExprCoreType.BOOLEAN),
-    Alias("alias", ExprCoreType.UNKNOWN);
-    // TODO: ranges, geo shape, point, shape
+    Alias("alias", ExprCoreType.UNKNOWN),
+    IntegerRange("integer_range", ExprCoreType.UNKNOWN),
+    FloatRange("float_range", ExprCoreType.UNKNOWN),
+    LongRange("long_range", ExprCoreType.UNKNOWN),
+    DoubleRange("double_range", ExprCoreType.UNKNOWN),
+    DateRange("date_range", ExprCoreType.UNKNOWN),
+    IpRange("ip_range", ExprCoreType.UNKNOWN);
+    // TODO: geo shape, point, shape
 
     private final String name;
 
@@ -115,6 +121,10 @@ public class OpenSearchDataType implements ExprType, Serializable {
     indexMapping.forEach(
         (k, v) -> {
           var innerMap = (Map<String, Object>) v;
+          // skip fields with enabled:false — they are not indexed and not queryable
+          if (Boolean.FALSE.equals(innerMap.get("enabled"))) {
+            return;
+          }
           // by default, the type is treated as an Object if "type" is not provided
           var type = ((String) innerMap.getOrDefault("type", "object")).replace("_", "");
           if (!EnumUtils.isValidEnumIgnoreCase(OpenSearchDataType.MappingType.class, type)) {
