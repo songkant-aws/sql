@@ -122,7 +122,7 @@ public class MaxAggregatorTest extends AggregationTest {
         assertThrows(
             ExpressionEvaluationException.class,
             () -> DSL.max(DSL.ref("double_value", DOUBLE)).valueOf(valueEnv()));
-    assertEquals("can't evaluate on aggregator: max", exception.getMessage());
+    assertTrue(exception.getMessage().startsWith("can't evaluate on aggregator: max("));
   }
 
   @Test

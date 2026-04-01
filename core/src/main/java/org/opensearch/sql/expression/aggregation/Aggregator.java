@@ -79,7 +79,13 @@ public abstract class Aggregator<S extends AggregationState>
   @Override
   public ExprValue valueOf(Environment<Expression, ExprValue> valueEnv) {
     throw new ExpressionEvaluationException(
-        String.format("can't evaluate on aggregator: %s", functionName));
+        String.format(
+            "can't evaluate on aggregator: %s(%s). "
+                + "An aggregator is not supposed to be evaluated directly. "
+                + "This is likely a bug in query plan optimization where an aggregator "
+                + "expression is placed in a non-aggregation context such as projection.",
+            functionName,
+            arguments));
   }
 
   @Override

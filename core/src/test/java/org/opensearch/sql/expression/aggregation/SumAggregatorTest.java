@@ -114,7 +114,7 @@ class SumAggregatorTest extends AggregationTest {
         assertThrows(
             ExpressionEvaluationException.class,
             () -> DSL.sum(DSL.ref("double_value", DOUBLE)).valueOf(valueEnv()));
-    assertEquals("can't evaluate on aggregator: sum", exception.getMessage());
+    assertTrue(exception.getMessage().startsWith("can't evaluate on aggregator: sum("));
   }
 
   @Test

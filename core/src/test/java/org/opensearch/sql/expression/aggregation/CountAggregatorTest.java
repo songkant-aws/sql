@@ -7,6 +7,7 @@ package org.opensearch.sql.expression.aggregation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.opensearch.sql.data.type.ExprCoreType.ARRAY;
 import static org.opensearch.sql.data.type.ExprCoreType.BOOLEAN;
 import static org.opensearch.sql.data.type.ExprCoreType.DATE;
@@ -170,7 +171,7 @@ class CountAggregatorTest extends AggregationTest {
         assertThrows(
             ExpressionEvaluationException.class,
             () -> DSL.count(DSL.ref("double_value", DOUBLE)).valueOf(valueEnv()));
-    assertEquals("can't evaluate on aggregator: count", exception.getMessage());
+    assertTrue(exception.getMessage().startsWith("can't evaluate on aggregator: count("));
   }
 
   @Test

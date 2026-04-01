@@ -132,7 +132,7 @@ public class VarianceAggregatorTest extends AggregationTest {
         assertThrows(
             ExpressionEvaluationException.class,
             () -> DSL.avg(ref("double_value", DOUBLE)).valueOf(valueEnv()));
-    assertEquals("can't evaluate on aggregator: avg", exception.getMessage());
+    assertTrue(exception.getMessage().startsWith("can't evaluate on aggregator: avg("));
   }
 
   @Test

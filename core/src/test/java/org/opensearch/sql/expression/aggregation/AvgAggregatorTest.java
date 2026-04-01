@@ -128,7 +128,7 @@ class AvgAggregatorTest extends AggregationTest {
         assertThrows(
             ExpressionEvaluationException.class,
             () -> DSL.avg(DSL.ref("double_value", DOUBLE)).valueOf(valueEnv()));
-    assertEquals("can't evaluate on aggregator: avg", exception.getMessage());
+    assertTrue(exception.getMessage().startsWith("can't evaluate on aggregator: avg("));
   }
 
   @Test

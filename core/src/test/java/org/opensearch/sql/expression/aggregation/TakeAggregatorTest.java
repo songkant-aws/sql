@@ -7,6 +7,7 @@ package org.opensearch.sql.expression.aggregation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.opensearch.sql.data.type.ExprCoreType.STRING;
 
 import com.google.common.collect.ImmutableList;
@@ -83,7 +84,7 @@ class TakeAggregatorTest extends AggregationTest {
         assertThrows(
             ExpressionEvaluationException.class,
             () -> DSL.take(DSL.ref("string_value", STRING), DSL.literal(10)).valueOf(valueEnv()));
-    assertEquals("can't evaluate on aggregator: take", exception.getMessage());
+    assertTrue(exception.getMessage().startsWith("can't evaluate on aggregator: take("));
   }
 
   @Test
