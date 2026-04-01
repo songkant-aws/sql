@@ -750,7 +750,9 @@ class OpenSearchIndexScanOptimizationTest {
     this.verifyPushDownCalls = verifyPushDownCalls;
     LogicalAggregation mockAgg = mock(LogicalAggregation.class);
     when(mockAgg.isBucketNullable()).thenReturn(bucketNullable);
-    var aggregationBuilder = new OpenSearchIndexScanAggregationBuilder(requestBuilder, mockAgg);
+    var aggregationBuilder =
+        new OpenSearchIndexScanAggregationBuilder(
+            requestBuilder, mockAgg, AggregationQueryBuilder.DEFAULT_BUCKET_SIZE);
     return new OpenSearchIndexScanBuilder(aggregationBuilder, builder -> indexScan);
   }
 
@@ -800,7 +802,7 @@ class OpenSearchIndexScanOptimizationTest {
                             .order(aggregation.sortBy.getSortOrder() == ASC ? "asc" : "desc")))
             .subAggregation(
                 AggregationBuilders.avg(aggregation.aggregateName).field(aggregation.aggregateBy))
-            .size(AggregationQueryBuilder.AGGREGATION_BUCKET_SIZE);
+            .size(AggregationQueryBuilder.DEFAULT_BUCKET_SIZE);
     List<AggregationBuilder> aggBuilders = Collections.singletonList(aggBuilder);
     responseParser = new BucketAggregationParser(new SingleValueParser(aggregation.aggregateName));
 

@@ -14,7 +14,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
 import org.opensearch.search.aggregations.AggregationBuilder;
@@ -41,11 +40,13 @@ import org.opensearch.sql.opensearch.storage.serde.ExpressionSerializer;
  * Build the AggregationBuilder from the list of {@link NamedAggregator} and list of {@link
  * NamedExpression}.
  */
-@RequiredArgsConstructor
 public class AggregationQueryBuilder extends ExpressionNodeVisitor<AggregationBuilder, Object> {
 
+  /** Default number of composite buckets to return. */
+  public static final int DEFAULT_BUCKET_SIZE = 1000;
+
   /** How many composite buckets should be returned. */
-  public static final int AGGREGATION_BUCKET_SIZE = 1000;
+  private final int bucketSize;
 
   /** Composite Aggregation builder for multiple buckets. */
   private final CompositeAggregationBuilder compositeBuilder;
@@ -53,10 +54,16 @@ public class AggregationQueryBuilder extends ExpressionNodeVisitor<AggregationBu
   /** Metric Aggregation builder. */
   private final MetricAggregationBuilder metricBuilder;
 
-  /** Aggregation Query Builder Constructor. */
-  public AggregationQueryBuilder(ExpressionSerializer serializer) {
+  /** Aggregation Query Builder Constructor with configurable bucket size. */
+  public AggregationQueryBuilder(ExpressionSerializer serializer, int bucketSize) {
     this.compositeBuilder = new CompositeAggregationBuilder(serializer);
     this.metricBuilder = new MetricAggregationBuilder(serializer);
+    this.bucketSize = bucketSize;
+  }
+
+  /** Aggregation Query Builder Constructor with default bucket size. */
+  public AggregationQueryBuilder(ExpressionSerializer serializer) {
+    this(serializer, DEFAULT_BUCKET_SIZE);
   }
 
   /** Build AggregationBuilder. */
@@ -94,7 +101,7 @@ public class AggregationQueryBuilder extends ExpressionNodeVisitor<AggregationBu
                               .collect(Collectors.toList()),
                           bucketNullable))
                   .subAggregations(metrics.getLeft())
-                  .size(AGGREGATION_BUCKET_SIZE)),
+                  .size(bucketSize)),
           new BucketAggregationParser(metrics.getRight()));
     }
   }

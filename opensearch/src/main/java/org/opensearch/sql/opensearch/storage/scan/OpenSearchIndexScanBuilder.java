@@ -11,6 +11,7 @@ import java.util.function.Function;
 import lombok.EqualsAndHashCode;
 import org.opensearch.sql.expression.ReferenceExpression;
 import org.opensearch.sql.opensearch.request.OpenSearchRequestBuilder;
+import org.opensearch.sql.opensearch.storage.script.aggregation.AggregationQueryBuilder;
 import org.opensearch.sql.planner.logical.LogicalAggregation;
 import org.opensearch.sql.planner.logical.LogicalFilter;
 import org.opensearch.sql.planner.logical.LogicalHighlight;
@@ -37,12 +38,24 @@ public class OpenSearchIndexScanBuilder extends TableScanBuilder {
   /** Is limit operator pushed down. */
   private boolean isLimitPushedDown = false;
 
+  /** Configurable bucket size for composite aggregation. */
+  private final int bucketSize;
+
   /** Constructor used during query execution. */
   public OpenSearchIndexScanBuilder(
       OpenSearchRequestBuilder requestBuilder,
-      Function<OpenSearchRequestBuilder, OpenSearchIndexScan> scanFactory) {
+      Function<OpenSearchRequestBuilder, OpenSearchIndexScan> scanFactory,
+      int bucketSize) {
     this.delegate = new OpenSearchIndexScanQueryBuilder(requestBuilder);
     this.scanFactory = scanFactory;
+    this.bucketSize = bucketSize;
+  }
+
+  /** Constructor used during query execution with default bucket size. */
+  public OpenSearchIndexScanBuilder(
+      OpenSearchRequestBuilder requestBuilder,
+      Function<OpenSearchRequestBuilder, OpenSearchIndexScan> scanFactory) {
+    this(requestBuilder, scanFactory, AggregationQueryBuilder.DEFAULT_BUCKET_SIZE);
   }
 
   /** Constructor used for unit tests. */
@@ -51,6 +64,7 @@ public class OpenSearchIndexScanBuilder extends TableScanBuilder {
       Function<OpenSearchRequestBuilder, OpenSearchIndexScan> scanFactory) {
     this.delegate = translator;
     this.scanFactory = scanFactory;
+    this.bucketSize = AggregationQueryBuilder.DEFAULT_BUCKET_SIZE;
   }
 
   @Override
@@ -75,7 +89,7 @@ public class OpenSearchIndexScanBuilder extends TableScanBuilder {
 
     // Switch to builder for aggregate query which has different push down logic
     //  for later filter, sort and limit operator.
-    delegate = new OpenSearchIndexScanAggregationBuilder(delegate.build(), aggregation);
+    delegate = new OpenSearchIndexScanAggregationBuilder(delegate.build(), aggregation, bucketSize);
     return true;
   }
 
