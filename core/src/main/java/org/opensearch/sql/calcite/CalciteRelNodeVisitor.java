@@ -1272,10 +1272,11 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
 
   private void projectPlusOverriding(
       List<RexNode> newFields, List<String> newNames, CalcitePlanContext context) {
-    List<String> originalFieldNames = context.relBuilder.peek().getRowType().getFieldNames();
+    RelDataType rowType = context.relBuilder.peek().getRowType();
+    List<String> originalFieldNames = rowType.getFieldNames();
     List<RexNode> toOverrideList =
         originalFieldNames.stream()
-            .filter(originalName -> shouldOverrideField(originalName, newNames))
+            .filter(originalName -> shouldOverrideField(originalName, newNames, rowType))
             .map(a -> (RexNode) context.relBuilder.field(a))
             .toList();
     // 1. add the new fields, For example "age0, country0"
@@ -1295,15 +1296,32 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     context.relBuilder.rename(expectedRenameFields);
   }
 
-  private boolean shouldOverrideField(String originalName, List<String> newNames) {
+  private boolean shouldOverrideField(
+      String originalName, List<String> newNames, RelDataType rowType) {
     return newNames.stream()
         .anyMatch(
-            newName ->
-                // Match exact field names (e.g., "age" == "age") for flat fields
-                newName.equals(originalName)
-                    // OR match nested paths (e.g., "resource.attributes..." starts with
-                    // "resource.")
-                    || newName.startsWith(originalName + "."));
+            newName -> {
+              // Match exact field names (e.g., "age" == "age") for flat fields
+              if (newName.equals(originalName)) {
+                return true;
+              }
+              // For dotted-path names (e.g., "a.b"), only override the root column "a" if it
+              // is NOT a MAP or STRUCT type. MAP/STRUCT roots should be preserved because the
+              // dotted-path is an additional derived field, not a replacement of the root.
+              if (newName.startsWith(originalName + ".")) {
+                RelDataTypeField field = rowType.getField(originalName, true, false);
+                if (field != null) {
+                  SqlTypeName typeName = field.getType().getSqlTypeName();
+                  if (typeName == SqlTypeName.MAP
+                      || typeName == SqlTypeName.ROW
+                      || typeName == SqlTypeName.STRUCTURED) {
+                    return false;
+                  }
+                }
+                return true;
+              }
+              return false;
+            });
   }
 
   private List<List<RexInputRef>> extractInputRefList(List<RelBuilder.AggCall> aggCalls) {
