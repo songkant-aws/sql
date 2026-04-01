@@ -59,6 +59,7 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.commons.lang3.tuple.Pair;
+import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.script.Script;
 import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.AggregationBuilders;
@@ -93,6 +94,7 @@ import org.opensearch.sql.opensearch.request.PredicateAnalyzer.ScriptQueryExpres
 import org.opensearch.sql.opensearch.response.agg.ArgMaxMinParser;
 import org.opensearch.sql.opensearch.response.agg.BucketAggregationParser;
 import org.opensearch.sql.opensearch.response.agg.CountAsTotalHitsParser;
+import org.opensearch.sql.opensearch.response.agg.DocCountParser;
 import org.opensearch.sql.opensearch.response.agg.MetricParser;
 import org.opensearch.sql.opensearch.response.agg.NoBucketAggregationParser;
 import org.opensearch.sql.opensearch.response.agg.OpenSearchAggregationResponseParser;
@@ -480,12 +482,27 @@ public class AggregateAnalyzer {
           Pair.of(
               helper.build(args.getFirst().getKey(), AggregationBuilders.sum(aggName)),
               new SingleValueParser(aggName));
-      case COUNT ->
-          Pair.of(
-              helper.build(
-                  !args.isEmpty() ? args.getFirst().getKey() : null,
-                  AggregationBuilders.count(aggName)),
+      case COUNT -> {
+        if (args.isEmpty()) {
+          // COUNT(*): use value_count on _index metadata field
+          yield Pair.of(
+              helper.build(null, AggregationBuilders.count(aggName)),
               new SingleValueParser(aggName));
+        } else if (args.getFirst().getKey() instanceof RexInputRef) {
+          // COUNT(field): use filter + exists query to count documents, not array elements.
+          // OpenSearch value_count counts each element in multi-valued fields separately,
+          // which violates SQL semantics where COUNT(field) counts documents with non-null values.
+          String fieldName = helper.inferNamedField(args.getFirst().getKey()).getRootName();
+          yield Pair.of(
+              AggregationBuilders.filter(aggName, QueryBuilders.existsQuery(fieldName)),
+              new DocCountParser(aggName));
+        } else {
+          // COUNT(expression): fall back to value_count with script
+          yield Pair.of(
+              helper.build(args.getFirst().getKey(), AggregationBuilders.count(aggName)),
+              new SingleValueParser(aggName));
+        }
+      }
       case MIN -> {
         ExprType fieldType =
             OpenSearchTypeFactory.convertRelDataTypeToExprType(args.getFirst().getKey().getType());

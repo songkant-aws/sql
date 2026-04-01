@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import org.apache.commons.lang3.tuple.Pair;
+import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.search.aggregations.AggregationBuilder;
 import org.opensearch.search.aggregations.AggregationBuilders;
 import org.opensearch.search.aggregations.AggregatorFactories;
@@ -101,12 +102,7 @@ public class MetricAggregationBuilder
             name,
             new SingleValueParser(name));
       case "count":
-        return make(
-            AggregationBuilders.count(name),
-            replaceStarOrLiteral(expression),
-            condition,
-            name,
-            new SingleValueParser(name));
+        return makeCount(expression, condition, name);
       case "min":
         return make(
             AggregationBuilders.min(name),
@@ -249,19 +245,36 @@ public class MetricAggregationBuilder
   }
 
   /**
-   * Replace star or literal with OpenSearch metadata field "_index". Because: 1) Analyzer already
-   * converts * to string literal, literal check here can handle both COUNT(*) and COUNT(1). 2)
-   * Value count aggregation on _index counts all docs (after filter), therefore it has same
-   * semantics as COUNT(*) or COUNT(1).
-   *
-   * @param countArg count function argument
-   * @return Reference to _index if literal, otherwise return original argument expression
+   * Build COUNT aggregation. For COUNT(*) or COUNT(literal), use value_count on _index metadata
+   * field which counts all documents. For COUNT(field), use a filter aggregation with an exists
+   * query so that each document is counted at most once, regardless of whether the field contains a
+   * scalar or an array (multi-valued field). This fixes incorrect counting where value_count would
+   * count each array element separately.
    */
-  private Expression replaceStarOrLiteral(Expression countArg) {
-    if (countArg instanceof LiteralExpression) {
-      return new ReferenceExpression("_index", INTEGER);
+  private Pair<AggregationBuilder, MetricParser> makeCount(
+      Expression expression, Expression condition, String name) {
+    if (expression instanceof LiteralExpression) {
+      // COUNT(*) or COUNT(1): use value_count on _index
+      return make(
+          AggregationBuilders.count(name),
+          new ReferenceExpression("_index", INTEGER),
+          condition,
+          name,
+          new SingleValueParser(name));
     }
-    return countArg;
+    // COUNT(field): use filter + exists query to count documents, not array elements
+    String fieldName = ((ReferenceExpression) expression).getAttr();
+    FilterAggregationBuilder filterAgg =
+        AggregationBuilders.filter(name, QueryBuilders.existsQuery(fieldName));
+    if (condition != null) {
+      filterAgg =
+          AggregationBuilders.filter(
+              name,
+              QueryBuilders.boolQuery()
+                  .must(QueryBuilders.existsQuery(fieldName))
+                  .must(filterBuilder.build(condition)));
+    }
+    return Pair.of(filterAgg, new DocCountParser(name));
   }
 
   /**
