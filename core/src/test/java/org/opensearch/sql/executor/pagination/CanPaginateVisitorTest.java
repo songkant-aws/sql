@@ -63,6 +63,7 @@ import org.opensearch.sql.ast.expression.RelevanceFieldList;
 import org.opensearch.sql.ast.expression.UnresolvedExpression;
 import org.opensearch.sql.ast.tree.Project;
 import org.opensearch.sql.ast.tree.Relation;
+import org.opensearch.sql.ast.tree.SubqueryAlias;
 
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 public class CanPaginateVisitorTest {
@@ -386,6 +387,20 @@ public class CanPaginateVisitorTest {
         };
     var plan = project(limit(relation("dummy"), 0, 0), allFields());
     assertFalse(plan.accept(visitor, null));
+  }
+
+  @Test
+  // select * from y AS t
+  public void allow_query_with_table_alias() {
+    var plan = project(new SubqueryAlias("t", relation("dummy")), allFields());
+    assertTrue(plan.accept(visitor, null));
+  }
+
+  @Test
+  // select x from y AS t
+  public void allow_query_with_table_alias_and_select_field() {
+    var plan = project(new SubqueryAlias("t", relation("dummy")), field("pewpew"));
+    assertTrue(plan.accept(visitor, null));
   }
 
   @Test

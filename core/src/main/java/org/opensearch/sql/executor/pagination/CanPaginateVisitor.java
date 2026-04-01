@@ -37,6 +37,7 @@ import org.opensearch.sql.ast.tree.Limit;
 import org.opensearch.sql.ast.tree.Project;
 import org.opensearch.sql.ast.tree.Relation;
 import org.opensearch.sql.ast.tree.Sort;
+import org.opensearch.sql.ast.tree.SubqueryAlias;
 import org.opensearch.sql.ast.tree.Values;
 import org.opensearch.sql.expression.function.BuiltinFunctionName;
 
@@ -73,6 +74,13 @@ public class CanPaginateVisitor extends AbstractNodeVisitor<Boolean, Object> {
     }
 
     return Boolean.TRUE;
+  }
+
+  @Override
+  public Boolean visitSubqueryAlias(SubqueryAlias node, Object context) {
+    // Table aliases (e.g., SELECT * FROM index AS t) are safe for pagination.
+    // Delegate to children to check the underlying relation.
+    return canPaginate(node, context);
   }
 
   protected Boolean canPaginate(Node node, Object context) {
