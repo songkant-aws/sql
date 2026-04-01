@@ -51,7 +51,7 @@ public class PatternsExpression extends ParseExpression {
 
   @Override
   public ExprValue parseValue(ExprValue value) throws ExpressionEvaluationException {
-    String rawString = value.isNull() || value.isMissing() ? "" : value.stringValue();
+    String rawString = value.isNull() || value.isMissing() ? "" : valueToString(value);
     if (useCustomPattern) {
       return new ExprStringValue(pattern.matcher(rawString).replaceAll(""));
     }
@@ -64,6 +64,18 @@ public class PatternsExpression extends ParseExpression {
       }
     }
     return new ExprStringValue(new String(chars, 0, pos));
+  }
+
+  /**
+   * Convert an ExprValue to its string representation. For STRING values, returns the string
+   * directly. For other types (integer, boolean, etc.), uses {@code value.value().toString()} to
+   * avoid ClassCastException from {@code stringValue()} which only works on STRING typed values.
+   */
+  private static String valueToString(ExprValue value) {
+    if (value.type() == org.opensearch.sql.data.type.ExprCoreType.STRING) {
+      return value.stringValue();
+    }
+    return value.value().toString();
   }
 
   /**

@@ -6,7 +6,6 @@
 package org.opensearch.sql.expression.parse;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.when;
 import static org.opensearch.sql.config.TestConfig.STRING_TYPE_MISSING_VALUE_FIELD;
 import static org.opensearch.sql.config.TestConfig.STRING_TYPE_NULL_VALUE_FIELD;
@@ -26,7 +25,6 @@ import org.opensearch.sql.data.model.ExprMissingValue;
 import org.opensearch.sql.data.model.ExprNullValue;
 import org.opensearch.sql.data.model.ExprStringValue;
 import org.opensearch.sql.data.model.ExprValue;
-import org.opensearch.sql.exception.SemanticCheckException;
 import org.opensearch.sql.expression.DSL;
 import org.opensearch.sql.expression.Expression;
 import org.opensearch.sql.expression.ExpressionTestBase;
@@ -82,13 +80,14 @@ class PatternsExpressionTest extends ExpressionTestBase {
   }
 
   @Test
-  public void throws_semantic_exception_if_value_type_is_not_string() {
-    assertThrows(
-        SemanticCheckException.class,
-        () ->
-            DSL.patterns(
-                    DSL.ref("boolean_value", BOOLEAN), DSL.literal("pattern"), DSL.literal("group"))
-                .valueOf(valueEnv()));
+  public void non_string_field_is_converted_to_string_for_pattern_extraction() {
+    // Non-string fields should be convertible to string representation for pattern extraction
+    // instead of throwing SemanticCheckException (fix for #4365).
+    ExprValue result =
+        DSL.patterns(DSL.ref("boolean_value", BOOLEAN), DSL.literal(""), DSL.literal("group"))
+            .valueOf(valueEnv());
+    // boolean "true" -> strip alphanumeric chars -> ""
+    assertEquals(stringValue(""), result);
   }
 
   @Test

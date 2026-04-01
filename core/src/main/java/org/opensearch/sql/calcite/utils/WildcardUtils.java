@@ -14,6 +14,12 @@ public class WildcardUtils {
 
   private static final String WILDCARD = "*";
 
+  /**
+   * Default maximum number of fields a single wildcard pattern may expand to. Prevents excessive
+   * memory use and slow queries on indices with thousands of fields.
+   */
+  public static final int DEFAULT_WILDCARD_EXPANSION_LIMIT = 1000;
+
   /** Matches a field name against a wildcard pattern using '*' as wildcard character. */
   public static boolean matchesWildcardPattern(String pattern, String fieldName) {
     if (pattern == null || fieldName == null) {
@@ -29,13 +35,28 @@ public class WildcardUtils {
   }
 
   /**
-   * Returns all fields that match the wildcard pattern.
+   * Returns all fields that match the wildcard pattern, up to {@link
+   * #DEFAULT_WILDCARD_EXPANSION_LIMIT}.
    *
    * @param pattern wildcard pattern with '*' characters
    * @param availableFields list of field names to filter
    * @return filtered list of matching field names
    */
   public static List<String> expandWildcardPattern(String pattern, List<String> availableFields) {
+    return expandWildcardPattern(pattern, availableFields, DEFAULT_WILDCARD_EXPANSION_LIMIT);
+  }
+
+  /**
+   * Returns all fields that match the wildcard pattern, enforcing the given limit.
+   *
+   * @param pattern wildcard pattern with '*' characters
+   * @param availableFields list of field names to filter
+   * @param maxExpansion maximum number of fields to return; 0 or negative means unlimited
+   * @return filtered list of matching field names
+   * @throws IllegalArgumentException if the expansion exceeds {@code maxExpansion}
+   */
+  public static List<String> expandWildcardPattern(
+      String pattern, List<String> availableFields, int maxExpansion) {
     if (pattern == null || availableFields == null) {
       return List.of();
     }
@@ -47,9 +68,20 @@ public class WildcardUtils {
     }
 
     String[] compiledPattern = pattern.split("\\" + WILDCARD, -1);
-    return availableFields.stream()
-        .filter(field -> matchesCompiledPattern(compiledPattern, field))
-        .collect(Collectors.toList());
+    List<String> matched =
+        availableFields.stream()
+            .filter(field -> matchesCompiledPattern(compiledPattern, field))
+            .collect(Collectors.toList());
+
+    if (maxExpansion > 0 && matched.size() > maxExpansion) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Wildcard pattern [%s] matches %d fields, exceeding the maximum allowed limit of %d."
+                  + " Use a more specific pattern or increase the expansion limit.",
+              pattern, matched.size(), maxExpansion));
+    }
+
+    return matched;
   }
 
   /** Matches field name against pre-compiled pattern parts. */

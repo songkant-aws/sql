@@ -343,6 +343,14 @@ public class OpenSearchSettings extends Settings {
           Setting.Property.NodeScope,
           Setting.Property.Dynamic);
 
+  public static final Setting<Integer> WILDCARD_EXPANSION_LIMIT_SETTING =
+      Setting.intSetting(
+          Key.WILDCARD_EXPANSION_LIMIT.getKeyValue(),
+          1000,
+          0,
+          Setting.Property.NodeScope,
+          Setting.Property.Dynamic);
+
   /** Construct OpenSearchSetting. The OpenSearchSetting must be singleton. */
   @SuppressWarnings("unchecked")
   public OpenSearchSettings(ClusterSettings clusterSettings) {
@@ -595,6 +603,12 @@ public class OpenSearchSettings extends Settings {
         Key.FIELD_TYPE_TOLERANCE,
         FIELD_TYPE_TOLERANCE_SETTING,
         new Updater(Key.FIELD_TYPE_TOLERANCE));
+    register(
+        settingBuilder,
+        clusterSettings,
+        Key.WILDCARD_EXPANSION_LIMIT,
+        WILDCARD_EXPANSION_LIMIT_SETTING,
+        new Updater(Key.WILDCARD_EXPANSION_LIMIT));
     defaultSettings = settingBuilder.build();
   }
 
@@ -687,6 +701,7 @@ public class OpenSearchSettings extends Settings {
         .add(SESSION_INACTIVITY_TIMEOUT_MILLIS_SETTING)
         .add(STREAMING_JOB_HOUSEKEEPER_INTERVAL_SETTING)
         .add(FIELD_TYPE_TOLERANCE_SETTING)
+        .add(WILDCARD_EXPANSION_LIMIT_SETTING)
         .build();
   }
 

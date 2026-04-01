@@ -143,6 +143,37 @@ class WildcardUtilsTest {
   }
 
   @Test
+  void testExpandWildcardPatternWithLimit() {
+    // Limit of 3: pattern matching 6 fields should throw
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> WildcardUtils.expandWildcardPattern("*a*", availableFields, 3));
+    assertTrue(ex.getMessage().contains("exceeding the maximum allowed limit of 3"));
+
+    // Limit of 2: suffix pattern matching exactly 2 should succeed
+    List<String> result = WildcardUtils.expandWildcardPattern("*name", availableFields, 2);
+    assertEquals(ImmutableList.of("firstname", "lastname"), result);
+
+    // Limit of 1: suffix pattern matching 2 should throw
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> WildcardUtils.expandWildcardPattern("*name", availableFields, 1));
+
+    // Limit of 0 means unlimited
+    List<String> unlimited = WildcardUtils.expandWildcardPattern("*", availableFields, 0);
+    assertEquals(availableFields, unlimited);
+
+    // Negative limit means unlimited
+    List<String> negative = WildcardUtils.expandWildcardPattern("*", availableFields, -1);
+    assertEquals(availableFields, negative);
+
+    // Non-wildcard patterns are not subject to the limit
+    List<String> exact = WildcardUtils.expandWildcardPattern("firstname", availableFields, 1);
+    assertEquals(ImmutableList.of("firstname"), exact);
+  }
+
+  @Test
   void testContainsWildcard() {
     // Test with wildcard
     testContainsWildcard("field*", true);

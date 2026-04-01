@@ -217,9 +217,17 @@ public class OpenSearchExprValueFactory {
         || type == STRUCT) {
       return parseStruct(content, field, supportArrays);
     } else if (typeActionMap.containsKey(type)) {
-      return content.isArray()
-          ? parseArray(content, field, type, supportArrays)
-          : typeActionMap.get(type).apply(content, type);
+      if (content.isArray()) {
+        return parseArray(content, field, type, supportArrays);
+      }
+      try {
+        return typeActionMap.get(type).apply(content, type);
+      } catch (Exception e) {
+        // Fields with ignore_malformed enabled may store values that don't match the mapped type
+        // (e.g. a string "abc" in an integer field). Fall back to content-based parsing so the
+        // value is still returned instead of failing the whole query.
+        return parseContent(content);
+      }
     } else {
       throw new IllegalStateException(
           String.format(

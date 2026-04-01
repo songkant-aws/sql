@@ -1177,6 +1177,21 @@ class OpenSearchExprValueFactoryTest {
     assertEquals(stringValue("value"), structValue.get("good"));
   }
 
+  // ==================== ignore_malformed Field Tests ====================
+
+  @Test
+  public void constructMalformedIntegerValueFallsBackToContentParsing() {
+    // When ignore_malformed is enabled, an integer field may contain a string value.
+    // The factory should fall back to content-based parsing instead of throwing.
+    assertEquals(stringValue("not_a_number"), constructFromObject("intV", "not_a_number"));
+  }
+
+  @Test
+  public void constructMalformedBooleanValueFallsBackToContentParsing() {
+    // A boolean field containing an integer value due to ignore_malformed
+    assertEquals(integerValue(42), constructFromObject("boolV", 42));
+  }
+
   @EqualsAndHashCode(callSuper = false)
   @ToString
   private static class TestType extends OpenSearchDataType {

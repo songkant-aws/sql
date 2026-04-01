@@ -47,6 +47,7 @@ public abstract class Settings {
 
     /** Query Settings. */
     FIELD_TYPE_TOLERANCE("plugins.query.field_type_tolerance"),
+    WILDCARD_EXPANSION_LIMIT("plugins.query.wildcard_expansion_limit"),
 
     /** Common Settings for SQL and PPL. */
     QUERY_MEMORY_LIMIT("plugins.query.memory_limit"),
