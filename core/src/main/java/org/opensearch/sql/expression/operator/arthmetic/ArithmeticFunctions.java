@@ -68,12 +68,26 @@ public class ArithmeticFunctions {
     return define(
         functionName,
         impl(
-            nullMissingHandling((v1, v2) -> new ExprByteValue(v1.byteValue() + v2.byteValue())),
+            nullMissingHandling(
+                (v1, v2) -> {
+                  int result = v1.byteValue() + v2.byteValue();
+                  if (result < Byte.MIN_VALUE || result > Byte.MAX_VALUE) {
+                    throw new ArithmeticException("byte overflow");
+                  }
+                  return new ExprByteValue((byte) result);
+                }),
             BYTE,
             BYTE,
             BYTE),
         impl(
-            nullMissingHandling((v1, v2) -> new ExprShortValue(v1.shortValue() + v2.shortValue())),
+            nullMissingHandling(
+                (v1, v2) -> {
+                  int result = v1.shortValue() + v2.shortValue();
+                  if (result < Short.MIN_VALUE || result > Short.MAX_VALUE) {
+                    throw new ArithmeticException("short overflow");
+                  }
+                  return new ExprShortValue((short) result);
+                }),
             SHORT,
             SHORT,
             SHORT),
@@ -274,12 +288,26 @@ public class ArithmeticFunctions {
     return define(
         functionName,
         impl(
-            nullMissingHandling((v1, v2) -> new ExprByteValue(v1.byteValue() * v2.byteValue())),
+            nullMissingHandling(
+                (v1, v2) -> {
+                  int result = v1.byteValue() * v2.byteValue();
+                  if (result < Byte.MIN_VALUE || result > Byte.MAX_VALUE) {
+                    throw new ArithmeticException("byte overflow");
+                  }
+                  return new ExprByteValue((byte) result);
+                }),
             BYTE,
             BYTE,
             BYTE),
         impl(
-            nullMissingHandling((v1, v2) -> new ExprShortValue(v1.shortValue() * v2.shortValue())),
+            nullMissingHandling(
+                (v1, v2) -> {
+                  int result = v1.shortValue() * v2.shortValue();
+                  if (result < Short.MIN_VALUE || result > Short.MAX_VALUE) {
+                    throw new ArithmeticException("short overflow");
+                  }
+                  return new ExprShortValue((short) result);
+                }),
             SHORT,
             SHORT,
             SHORT),
@@ -328,12 +356,26 @@ public class ArithmeticFunctions {
     return define(
         functionName,
         impl(
-            nullMissingHandling((v1, v2) -> new ExprByteValue(v1.byteValue() - v2.byteValue())),
+            nullMissingHandling(
+                (v1, v2) -> {
+                  int result = v1.byteValue() - v2.byteValue();
+                  if (result < Byte.MIN_VALUE || result > Byte.MAX_VALUE) {
+                    throw new ArithmeticException("byte overflow");
+                  }
+                  return new ExprByteValue((byte) result);
+                }),
             BYTE,
             BYTE,
             BYTE),
         impl(
-            nullMissingHandling((v1, v2) -> new ExprShortValue(v1.shortValue() - v2.shortValue())),
+            nullMissingHandling(
+                (v1, v2) -> {
+                  int result = v1.shortValue() - v2.shortValue();
+                  if (result < Short.MIN_VALUE || result > Short.MAX_VALUE) {
+                    throw new ArithmeticException("short overflow");
+                  }
+                  return new ExprShortValue((short) result);
+                }),
             SHORT,
             SHORT,
             SHORT),
