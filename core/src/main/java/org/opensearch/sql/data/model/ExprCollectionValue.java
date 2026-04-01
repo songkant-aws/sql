@@ -63,10 +63,21 @@ public class ExprCollectionValue extends AbstractExprValue {
     }
   }
 
-  /** Only compare the size of the list. */
+  /**
+   * Compare arrays lexicographically, element by element. If all compared elements are equal, the
+   * shorter array is considered less than the longer one.
+   */
   @Override
   public int compare(ExprValue other) {
-    return Integer.compare(valueList.size(), other.collectionValue().size());
+    List<ExprValue> otherList = other.collectionValue();
+    int minSize = Math.min(valueList.size(), otherList.size());
+    for (int i = 0; i < minSize; i++) {
+      int cmp = valueList.get(i).compareTo(otherList.get(i));
+      if (cmp != 0) {
+        return cmp;
+      }
+    }
+    return Integer.compare(valueList.size(), otherList.size());
   }
 
   @Override

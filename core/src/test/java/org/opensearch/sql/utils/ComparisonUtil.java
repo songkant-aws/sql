@@ -69,6 +69,8 @@ public class ComparisonUtil {
         return v1.dateValue().compareTo(v2.dateValue());
       case TIMESTAMP:
         return v1.timestampValue().compareTo(v2.timestampValue());
+      case ARRAY:
+        return v1.compareTo(v2);
       default:
         throw new ExpressionEvaluationException(
             String.format("%s instances are not comparable", v1.getClass().getSimpleName()));
