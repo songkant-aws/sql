@@ -174,11 +174,25 @@ public final class CoercionUtils {
 
   private static final Set<ExprType> NUMBER_TYPES = ExprCoreType.numberTypes();
 
+  private static final Set<ExprType> TEMPORAL_TYPES =
+      Set.of(ExprCoreType.DATE, ExprCoreType.TIME, ExprCoreType.TIMESTAMP);
+
+  private static boolean hasTemporal(ExprType left, ExprType right) {
+    return TEMPORAL_TYPES.contains(left) || TEMPORAL_TYPES.contains(right);
+  }
+
+  private static ExprType getTemporalType(ExprType left, ExprType right) {
+    return TEMPORAL_TYPES.contains(left) ? left : right;
+  }
+
   private static final List<CoercionRule> COMMON_COERCION_RULES =
       List.of(
           CoercionRule.of(
               (left, right) -> areDateAndTime(left, right),
               (left, right) -> ExprCoreType.TIMESTAMP),
+          CoercionRule.of(
+              (left, right) -> hasString(left, right) && hasTemporal(left, right),
+              CoercionUtils::getTemporalType),
           CoercionRule.of(
               (left, right) -> hasString(left, right) && hasNumber(left, right),
               (left, right) -> ExprCoreType.DOUBLE));

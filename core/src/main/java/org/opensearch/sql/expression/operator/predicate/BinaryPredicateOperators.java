@@ -10,22 +10,35 @@ import static org.opensearch.sql.data.model.ExprValueUtils.LITERAL_MISSING;
 import static org.opensearch.sql.data.model.ExprValueUtils.LITERAL_NULL;
 import static org.opensearch.sql.data.model.ExprValueUtils.LITERAL_TRUE;
 import static org.opensearch.sql.data.type.ExprCoreType.BOOLEAN;
+import static org.opensearch.sql.data.type.ExprCoreType.DATE;
 import static org.opensearch.sql.data.type.ExprCoreType.INTEGER;
 import static org.opensearch.sql.data.type.ExprCoreType.STRING;
+import static org.opensearch.sql.data.type.ExprCoreType.TIME;
+import static org.opensearch.sql.data.type.ExprCoreType.TIMESTAMP;
 import static org.opensearch.sql.expression.function.FunctionDSL.define;
 import static org.opensearch.sql.expression.function.FunctionDSL.impl;
 import static org.opensearch.sql.expression.function.FunctionDSL.nullMissingHandling;
 
 import com.google.common.collect.ImmutableTable;
 import com.google.common.collect.Table;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 import lombok.experimental.UtilityClass;
+import org.apache.commons.lang3.tuple.Pair;
 import org.opensearch.sql.data.model.ExprBooleanValue;
+import org.opensearch.sql.data.model.ExprDateValue;
+import org.opensearch.sql.data.model.ExprTimeValue;
+import org.opensearch.sql.data.model.ExprTimestampValue;
 import org.opensearch.sql.data.model.ExprValue;
 import org.opensearch.sql.data.type.ExprCoreType;
 import org.opensearch.sql.expression.function.BuiltinFunctionName;
 import org.opensearch.sql.expression.function.BuiltinFunctionRepository;
 import org.opensearch.sql.expression.function.DefaultFunctionResolver;
+import org.opensearch.sql.expression.function.FunctionBuilder;
+import org.opensearch.sql.expression.function.FunctionName;
+import org.opensearch.sql.expression.function.FunctionSignature;
+import org.opensearch.sql.expression.function.SerializableFunction;
 import org.opensearch.sql.utils.OperatorUtils;
 
 /**
@@ -301,88 +314,159 @@ public class BinaryPredicateOperators {
         impl((v1, v2) -> lookupTableFunction(v1, v2, xorTable), BOOLEAN, BOOLEAN, BOOLEAN));
   }
 
+  /**
+   * Cast a string ExprValue to the given temporal type for implicit coercion in comparisons.
+   * Supports DATE, TIME, and TIMESTAMP target types.
+   */
+  private static ExprValue castStringToTemporal(ExprValue stringVal, ExprCoreType temporalType) {
+    String s = stringVal.stringValue();
+    return switch (temporalType) {
+      case DATE -> new ExprDateValue(s);
+      case TIME -> new ExprTimeValue(s);
+      case TIMESTAMP -> new ExprTimestampValue(s);
+      default -> throw new IllegalArgumentException("Unsupported temporal type: " + temporalType);
+    };
+  }
+
+  /**
+   * Build implicit string-to-temporal coercion overloads for a comparison operator. For each
+   * temporal type (DATE, TIME, TIMESTAMP), adds (STRING, temporal) and (temporal, STRING) overloads
+   * that cast the string operand before comparing.
+   */
+  private static List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>>
+      stringTemporalCompareImpls(
+          java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> comparator) {
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>();
+    for (ExprCoreType temporalType : List.of(DATE, TIME, TIMESTAMP)) {
+      impls.add(
+          impl(
+              nullMissingHandling(
+                  (v1, v2) -> comparator.apply(castStringToTemporal(v1, temporalType), v2)),
+              BOOLEAN,
+              STRING,
+              temporalType));
+      impls.add(
+          impl(
+              nullMissingHandling(
+                  (v1, v2) -> comparator.apply(v1, castStringToTemporal(v2, temporalType))),
+              BOOLEAN,
+              temporalType,
+              STRING));
+    }
+    return impls;
+  }
+
   private static DefaultFunctionResolver equal() {
-    return define(
-        BuiltinFunctionName.EQUAL.getName(),
-        ExprCoreType.coreTypes().stream()
-            .map(
-                type ->
-                    impl(
-                        nullMissingHandling((v1, v2) -> ExprBooleanValue.of(v1.equals(v2))),
-                        BOOLEAN,
-                        type,
-                        type))
-            .collect(Collectors.toList()));
+    java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> cmp =
+        (v1, v2) -> ExprBooleanValue.of(v1.equals(v2));
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>(
+            ExprCoreType.coreTypes().stream()
+                .map(
+                    type ->
+                        impl(
+                            nullMissingHandling((v1, v2) -> ExprBooleanValue.of(v1.equals(v2))),
+                            BOOLEAN,
+                            type,
+                            type))
+                .collect(Collectors.toList()));
+    impls.addAll(stringTemporalCompareImpls(cmp));
+    return define(BuiltinFunctionName.EQUAL.getName(), impls);
   }
 
   private static DefaultFunctionResolver notEqual() {
-    return define(
-        BuiltinFunctionName.NOTEQUAL.getName(),
-        ExprCoreType.coreTypes().stream()
-            .map(
-                type ->
-                    impl(
-                        nullMissingHandling((v1, v2) -> ExprBooleanValue.of(!v1.equals(v2))),
-                        BOOLEAN,
-                        type,
-                        type))
-            .collect(Collectors.toList()));
+    java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> cmp =
+        (v1, v2) -> ExprBooleanValue.of(!v1.equals(v2));
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>(
+            ExprCoreType.coreTypes().stream()
+                .map(
+                    type ->
+                        impl(
+                            nullMissingHandling((v1, v2) -> ExprBooleanValue.of(!v1.equals(v2))),
+                            BOOLEAN,
+                            type,
+                            type))
+                .collect(Collectors.toList()));
+    impls.addAll(stringTemporalCompareImpls(cmp));
+    return define(BuiltinFunctionName.NOTEQUAL.getName(), impls);
   }
 
   private static DefaultFunctionResolver less() {
-    return define(
-        BuiltinFunctionName.LESS.getName(),
-        ExprCoreType.coreTypes().stream()
-            .map(
-                type ->
-                    impl(
-                        nullMissingHandling((v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) < 0)),
-                        BOOLEAN,
-                        type,
-                        type))
-            .collect(Collectors.toList()));
+    java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> cmp =
+        (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) < 0);
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>(
+            ExprCoreType.coreTypes().stream()
+                .map(
+                    type ->
+                        impl(
+                            nullMissingHandling(
+                                (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) < 0)),
+                            BOOLEAN,
+                            type,
+                            type))
+                .collect(Collectors.toList()));
+    impls.addAll(stringTemporalCompareImpls(cmp));
+    return define(BuiltinFunctionName.LESS.getName(), impls);
   }
 
   private static DefaultFunctionResolver lte() {
-    return define(
-        BuiltinFunctionName.LTE.getName(),
-        ExprCoreType.coreTypes().stream()
-            .map(
-                type ->
-                    impl(
-                        nullMissingHandling((v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) <= 0)),
-                        BOOLEAN,
-                        type,
-                        type))
-            .collect(Collectors.toList()));
+    java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> cmp =
+        (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) <= 0);
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>(
+            ExprCoreType.coreTypes().stream()
+                .map(
+                    type ->
+                        impl(
+                            nullMissingHandling(
+                                (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) <= 0)),
+                            BOOLEAN,
+                            type,
+                            type))
+                .collect(Collectors.toList()));
+    impls.addAll(stringTemporalCompareImpls(cmp));
+    return define(BuiltinFunctionName.LTE.getName(), impls);
   }
 
   private static DefaultFunctionResolver greater() {
-    return define(
-        BuiltinFunctionName.GREATER.getName(),
-        ExprCoreType.coreTypes().stream()
-            .map(
-                type ->
-                    impl(
-                        nullMissingHandling((v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) > 0)),
-                        BOOLEAN,
-                        type,
-                        type))
-            .collect(Collectors.toList()));
+    java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> cmp =
+        (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) > 0);
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>(
+            ExprCoreType.coreTypes().stream()
+                .map(
+                    type ->
+                        impl(
+                            nullMissingHandling(
+                                (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) > 0)),
+                            BOOLEAN,
+                            type,
+                            type))
+                .collect(Collectors.toList()));
+    impls.addAll(stringTemporalCompareImpls(cmp));
+    return define(BuiltinFunctionName.GREATER.getName(), impls);
   }
 
   private static DefaultFunctionResolver gte() {
-    return define(
-        BuiltinFunctionName.GTE.getName(),
-        ExprCoreType.coreTypes().stream()
-            .map(
-                type ->
-                    impl(
-                        nullMissingHandling((v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) >= 0)),
-                        BOOLEAN,
-                        type,
-                        type))
-            .collect(Collectors.toList()));
+    java.util.function.BiFunction<ExprValue, ExprValue, ExprBooleanValue> cmp =
+        (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) >= 0);
+    List<SerializableFunction<FunctionName, Pair<FunctionSignature, FunctionBuilder>>> impls =
+        new ArrayList<>(
+            ExprCoreType.coreTypes().stream()
+                .map(
+                    type ->
+                        impl(
+                            nullMissingHandling(
+                                (v1, v2) -> ExprBooleanValue.of(v1.compareTo(v2) >= 0)),
+                            BOOLEAN,
+                            type,
+                            type))
+                .collect(Collectors.toList()));
+    impls.addAll(stringTemporalCompareImpls(cmp));
+    return define(BuiltinFunctionName.GTE.getName(), impls);
   }
 
   private static DefaultFunctionResolver like() {

@@ -42,15 +42,22 @@ public class ExprTimestampValue extends AbstractExprValue {
       try {
         ldt = LocalDateTime.parse(timestamp, DateTimeFormatters.DATE_TIMESTAMP_FORMATTER);
       } catch (DateTimeParseException ignored) {
-        ZonedDateTime zdt = ZonedDateTime.parse(timestamp, DateTimeFormatter.ISO_DATE_TIME);
-        ldt = zdt.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        try {
+          ZonedDateTime zdt = ZonedDateTime.parse(timestamp, DateTimeFormatter.ISO_DATE_TIME);
+          ldt = zdt.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        } catch (DateTimeParseException ignored2) {
+          // Try epoch millis as a last resort
+          long epochMillis = Long.parseLong(timestamp);
+          this.timestamp = Instant.ofEpochMilli(epochMillis);
+          return;
+        }
       }
       this.timestamp = ldt.toInstant(ZoneOffset.UTC);
-    } catch (DateTimeParseException e) {
+    } catch (NumberFormatException | DateTimeParseException e) {
       throw new ExpressionEvaluationException(
           String.format(
-              "timestamp:%s in unsupported format, please use 'yyyy-MM-dd HH:mm:ss[.SSSSSSSSS]' or"
-                  + " ISO 8601 format",
+              "timestamp:%s in unsupported format, please use 'yyyy-MM-dd HH:mm:ss[.SSSSSSSSS]',"
+                  + " ISO 8601 format, or epoch millis",
               timestamp));
     }
   }

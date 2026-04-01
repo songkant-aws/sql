@@ -37,13 +37,22 @@ public class ExprDateValue extends AbstractExprValue {
       try {
         ldt = LocalDateTime.parse(date, DateTimeFormatters.DATE_TIMESTAMP_FORMATTER);
       } catch (DateTimeParseException ignored) {
-        ZonedDateTime zdt = ZonedDateTime.parse(date, DateTimeFormatter.ISO_DATE_TIME);
-        ldt = zdt.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        try {
+          ZonedDateTime zdt = ZonedDateTime.parse(date, DateTimeFormatter.ISO_DATE_TIME);
+          ldt = zdt.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        } catch (DateTimeParseException ignored2) {
+          // Try epoch millis as a last resort
+          long epochMillis = Long.parseLong(date);
+          this.date =
+              java.time.Instant.ofEpochMilli(epochMillis).atZone(ZoneOffset.UTC).toLocalDate();
+          return;
+        }
       }
       this.date = ldt.toLocalDate();
-    } catch (DateTimeParseException e) {
+    } catch (NumberFormatException | DateTimeParseException e) {
       throw new ExpressionEvaluationException(
-          String.format("date:%s in unsupported format, please use 'yyyy-MM-dd'", date));
+          String.format(
+              "date:%s in unsupported format, please use 'yyyy-MM-dd' or epoch millis", date));
     }
   }
 

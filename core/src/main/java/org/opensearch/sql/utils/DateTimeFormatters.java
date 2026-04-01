@@ -131,7 +131,12 @@ public class DateTimeFormatters {
 
   public static final DateTimeFormatter DATE_TIMESTAMP_FORMATTER =
       new DateTimeFormatterBuilder()
-          .appendPattern("[uuuu-MM-dd HH:mm:ss][uuuu-MM-dd HH:mm][uuuu-MM-dd]")
+          .appendPattern(
+              "[uuuu-MM-dd HH:mm:ss][uuuu-MM-dd'T'HH:mm:ss]"
+                  + "[uuuu-MM-dd HH:mm][uuuu-MM-dd'T'HH:mm]"
+                  + "[uuuu/MM/dd HH:mm:ss][uuuu/MM/dd'T'HH:mm:ss]"
+                  + "[uuuu/MM/dd HH:mm][uuuu/MM/dd]"
+                  + "[uuuu-MM-dd][uuuuMMdd]")
           .appendFraction(
               ChronoField.NANO_OF_SECOND, MIN_FRACTION_SECONDS, MAX_FRACTION_SECONDS, true)
           .parseDefaulting(HOUR_OF_DAY, 0)

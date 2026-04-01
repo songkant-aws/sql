@@ -63,6 +63,7 @@ public class TypeCastOperators {
     repository.register(castToDate());
     repository.register(castToTime());
     repository.register(castToTimestamp());
+    repository.register(castToDatetime());
   }
 
   private static DefaultFunctionResolver castToString() {
@@ -218,6 +219,27 @@ public class TypeCastOperators {
   private static DefaultFunctionResolver castToTimestamp() {
     return FunctionDSL.define(
         BuiltinFunctionName.CAST_TO_TIMESTAMP.getName(),
+        impl(
+            nullMissingHandling((v) -> new ExprTimestampValue(v.stringValue())), TIMESTAMP, STRING),
+        impl(
+            nullMissingHandling((v) -> new ExprTimestampValue(v.timestampValue())),
+            TIMESTAMP,
+            DATE),
+        implWithProperties(
+            nullMissingHandlingWithProperties(
+                (fp, v) -> new ExprTimestampValue(((ExprTimeValue) v).timestampValue(fp))),
+            TIMESTAMP,
+            TIME),
+        impl(nullMissingHandling((v) -> v), TIMESTAMP, TIMESTAMP));
+  }
+
+  /**
+   * CAST(x AS DATETIME) — treated as an alias for CAST(x AS TIMESTAMP). Resolves issue #853 where
+   * DATETIME was recognized in the parser but had no corresponding cast operator.
+   */
+  private static DefaultFunctionResolver castToDatetime() {
+    return FunctionDSL.define(
+        BuiltinFunctionName.CAST_TO_DATETIME.getName(),
         impl(
             nullMissingHandling((v) -> new ExprTimestampValue(v.stringValue())), TIMESTAMP, STRING),
         impl(

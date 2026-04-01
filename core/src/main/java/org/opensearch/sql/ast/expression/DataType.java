@@ -26,6 +26,7 @@ public enum DataType {
   DATE(ExprCoreType.DATE),
   TIME(ExprCoreType.TIME),
   TIMESTAMP(ExprCoreType.TIMESTAMP),
+  DATETIME(ExprCoreType.TIMESTAMP),
   INTERVAL(ExprCoreType.INTERVAL),
 
   // the decimal DataType is only used for building decimal literal,
