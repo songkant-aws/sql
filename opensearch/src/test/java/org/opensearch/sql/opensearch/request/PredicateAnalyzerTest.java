@@ -1216,6 +1216,14 @@ public class PredicateAnalyzerTest {
             "must" : [
               {
                 "bool" : {
+                  "must" : [
+                    {
+                      "exists" : {
+                        "field" : "a",
+                        "boost" : 1.0
+                      }
+                    }
+                  ],
                   "must_not" : [
                     {
                       "terms" : {

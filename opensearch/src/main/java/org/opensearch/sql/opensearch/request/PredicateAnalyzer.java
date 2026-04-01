@@ -1516,7 +1516,10 @@ public class PredicateAnalyzer {
     @Override
     public QueryExpression notIn(LiteralExpression literal) {
       Collection<?> collection = (Collection<?>) literal.value();
-      builder = boolQuery().mustNot(termsQuery(getFieldReferenceForTermQuery(), collection));
+      builder =
+          boolQuery()
+              .must(existsQuery(getFieldReference()))
+              .mustNot(termsQuery(getFieldReferenceForTermQuery(), collection));
       return this;
     }
 
