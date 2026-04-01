@@ -2146,22 +2146,62 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       String segmentCol,
       String[] helperColsToCleanup) {
 
+    // Pre-materialize window frame bounds on the left so that the correlate filter
+    // uses only simple field accesses on the correlation variable. This avoids
+    // issues with Calcite 1.41+'s CorrelateProjectExtractor which can produce
+    // incorrect plans when correlated expressions contain arithmetic (see #4800).
+    final String FRAME_LOWER_COL = "__frame_lower__";
+    final String FRAME_UPPER_COL = "__frame_upper__";
+    boolean hasWindow = node.getWindow() > 0;
+    List<String> frameBoundCols = new ArrayList<>();
+
+    if (hasWindow) {
+      context.relBuilder.push(leftWithHelpers);
+      RexNode seqRef = context.relBuilder.field(seqCol);
+      if (node.isCurrent()) {
+        // frame: [seq - (w-1), seq]
+        RexNode lower =
+            context.relBuilder.call(
+                SqlStdOperatorTable.MINUS,
+                seqRef,
+                context.relBuilder.literal(node.getWindow() - 1));
+        context.relBuilder.projectPlus(context.relBuilder.alias(lower, FRAME_LOWER_COL));
+        frameBoundCols.add(FRAME_LOWER_COL);
+      } else {
+        // frame: [seq - w, seq - 1]
+        RexNode lower =
+            context.relBuilder.call(
+                SqlStdOperatorTable.MINUS, seqRef, context.relBuilder.literal(node.getWindow()));
+        RexNode upper =
+            context.relBuilder.call(
+                SqlStdOperatorTable.MINUS, seqRef, context.relBuilder.literal(1));
+        context.relBuilder.projectPlus(
+            context.relBuilder.alias(lower, FRAME_LOWER_COL),
+            context.relBuilder.alias(upper, FRAME_UPPER_COL));
+        frameBoundCols.add(FRAME_LOWER_COL);
+        frameBoundCols.add(FRAME_UPPER_COL);
+      }
+      leftWithHelpers = context.relBuilder.build();
+    }
+
     final Holder<@Nullable RexCorrelVariable> v = Holder.empty();
     context.relBuilder.push(leftWithHelpers);
     context.relBuilder.variable(v::set);
 
     RexNode rightSeq = context.relBuilder.field(seqCol);
-    RexNode outerSeq = context.relBuilder.field(v.get(), seqCol);
 
     RexNode filter;
     if (segmentCol != null) { // reset condition
       RexNode segRight = context.relBuilder.field(segmentCol);
       RexNode segOuter = context.relBuilder.field(v.get(), segmentCol);
-      RexNode frame = buildResetFrameFilter(context, node, outerSeq, rightSeq, segOuter, segRight);
+      RexNode outerSeq = context.relBuilder.field(v.get(), seqCol);
+      RexNode frame =
+          buildResetFrameFilter(
+              context, node, outerSeq, rightSeq, segOuter, segRight, v.get(), frameBoundCols);
       RexNode group = buildGroupFilter(context, node, groupList, v.get());
       filter = (group == null) ? frame : context.relBuilder.and(frame, group);
     } else { // global + window + by condition
-      RexNode frame = buildFrameFilter(context, node, outerSeq, rightSeq);
+      RexNode frame = buildFrameFilterFromCols(context, node, rightSeq, v.get(), frameBoundCols);
       RexNode group = buildGroupFilter(context, node, groupList, v.get());
       filter = context.relBuilder.and(frame, group);
     }
@@ -2179,6 +2219,9 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       requiredLeft = new ArrayList<>(requiredLeft);
       requiredLeft.add(context.relBuilder.field(2, 0, segmentCol));
     }
+    for (String col : frameBoundCols) {
+      requiredLeft.add(context.relBuilder.field(2, 0, col));
+    }
     context.relBuilder.correlate(JoinRelType.LEFT, v.get().id, requiredLeft);
 
     // resort to original order
@@ -2188,9 +2231,12 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       context.relBuilder.sort(context.relBuilder.field(seqCol));
     }
 
-    // cleanup helper columns
+    // cleanup helper columns (including pre-materialized frame bounds)
     List<RexNode> cleanup = new ArrayList<>();
     for (String c : helperColsToCleanup) {
+      cleanup.add(context.relBuilder.field(c));
+    }
+    for (String c : frameBoundCols) {
       cleanup.add(context.relBuilder.field(c));
     }
     context.relBuilder.projectExcept(cleanup);
@@ -2263,25 +2309,27 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     return context.relBuilder.build();
   }
 
-  private RexNode buildFrameFilter(
-      CalcitePlanContext context, StreamWindow node, RexNode outerSeq, RexNode rightSeq) {
-    // window always >0
-    // frame: either [outer-(w-1), outer] or [outer-w, outer-1]
+  /**
+   * Build frame filter using pre-materialized bound columns on the correlation variable. All
+   * correlated references are simple field accesses, compatible with Calcite 1.41+.
+   */
+  private RexNode buildFrameFilterFromCols(
+      CalcitePlanContext context,
+      StreamWindow node,
+      RexNode rightSeq,
+      RexCorrelVariable corVar,
+      List<String> frameBoundCols) {
+    // window always >0 when this is called; bounds are pre-materialized
     if (node.isCurrent()) {
-      RexNode lower =
-          context.relBuilder.call(
-              SqlStdOperatorTable.MINUS,
-              outerSeq,
-              context.relBuilder.literal(node.getWindow() - 1));
-      return context.relBuilder.between(rightSeq, lower, outerSeq);
+      // frame: [lower, outerSeq] where lower = seq-(w-1)
+      RexNode outerLower = context.relBuilder.field(corVar, frameBoundCols.get(0));
+      RexNode outerSeq = context.relBuilder.field(corVar, ROW_NUMBER_COLUMN_FOR_STREAMSTATS);
+      return context.relBuilder.between(rightSeq, outerLower, outerSeq);
     } else {
-      RexNode lower =
-          context.relBuilder.call(
-              SqlStdOperatorTable.MINUS, outerSeq, context.relBuilder.literal(node.getWindow()));
-      RexNode upper =
-          context.relBuilder.call(
-              SqlStdOperatorTable.MINUS, outerSeq, context.relBuilder.literal(1));
-      return context.relBuilder.between(rightSeq, lower, upper);
+      // frame: [lower, upper] where lower = seq-w, upper = seq-1
+      RexNode outerLower = context.relBuilder.field(corVar, frameBoundCols.get(0));
+      RexNode outerUpper = context.relBuilder.field(corVar, frameBoundCols.get(1));
+      return context.relBuilder.between(rightSeq, outerLower, outerUpper);
     }
   }
 
@@ -2291,7 +2339,9 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       RexNode outerSeq,
       RexNode rightSeq,
       RexNode segIdOuter,
-      RexNode segIdRight) {
+      RexNode segIdRight,
+      RexCorrelVariable corVar,
+      List<String> frameBoundCols) {
     // 1. Compute sequence range (handle running window semantics when window == 0)
     RexNode seqFilter;
     if (node.getWindow() == 0) {
@@ -2301,8 +2351,8 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
               ? context.relBuilder.lessThanOrEqual(rightSeq, outerSeq)
               : context.relBuilder.lessThan(rightSeq, outerSeq);
     } else {
-      // Reuse normal frame filter logic when window > 0
-      seqFilter = buildFrameFilter(context, node, outerSeq, rightSeq);
+      // Reuse frame filter with pre-materialized bounds when window > 0
+      seqFilter = buildFrameFilterFromCols(context, node, rightSeq, corVar, frameBoundCols);
     }
     // 2. Ensure same segment (seg_id) for reset partitioning
     RexNode segFilter = context.relBuilder.equals(segIdRight, segIdOuter);

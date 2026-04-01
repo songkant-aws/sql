@@ -5,8 +5,11 @@
 
 package org.opensearch.sql.ppl.calcite;
 
+import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.sql2rel.RelDecorrelator;
 import org.apache.calcite.test.CalciteAssert;
+import org.apache.calcite.tools.RelBuilder;
 import org.junit.Test;
 
 public class CalcitePPLStreamstatsTest extends CalcitePPLAbstractTest {
@@ -94,21 +97,22 @@ public class CalcitePPLStreamstatsTest extends CalcitePPLAbstractTest {
     RelNode root = getRelNode(ppl);
     String expectedLogical =
         "LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4], SAL=[$5],"
-            + " COMM=[$6], DEPTNO=[$7], max(SAL)=[$9])\n"
+            + " COMM=[$6], DEPTNO=[$7], max(SAL)=[$10])\n"
             + "  LogicalSort(sort0=[$8], dir0=[ASC])\n"
             + "    LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{7,"
-            + " 8}])\n"
+            + " 8, 9}])\n"
             + "      LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4],"
-            + " SAL=[$5], COMM=[$6], DEPTNO=[$7], __stream_seq__=[ROW_NUMBER() OVER ()])\n"
+            + " SAL=[$5], COMM=[$6], DEPTNO=[$7], __stream_seq__=[ROW_NUMBER() OVER ()],"
+            + " __frame_lower__=[-(ROW_NUMBER() OVER (), 4)])\n"
             + "        LogicalTableScan(table=[[scott, EMP]])\n"
             + "      LogicalAggregate(group=[{}], max(SAL)=[MAX($0)])\n"
             + "        LogicalProject(SAL=[$5])\n"
-            + "          LogicalFilter(condition=[AND(>=($8, -($cor0.__stream_seq__, 4)), <=($8,"
+            + "          LogicalFilter(condition=[AND(>=($8, $cor0.__frame_lower__), <=($8,"
             + " $cor0.__stream_seq__), OR(=($7, $cor0.DEPTNO), AND(IS NULL($7), IS"
             + " NULL($cor0.DEPTNO))))])\n"
             + "            LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3],"
             + " HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], __stream_seq__=[ROW_NUMBER() OVER"
-            + " ()])\n"
+            + " ()], __frame_lower__=[-(ROW_NUMBER() OVER (), 4)])\n"
             + "              LogicalTableScan(table=[[scott, EMP]])\n";
     verifyLogical(root, expectedLogical);
 
@@ -116,13 +120,15 @@ public class CalcitePPLStreamstatsTest extends CalcitePPLAbstractTest {
         "SELECT `$cor0`.`EMPNO`, `$cor0`.`ENAME`, `$cor0`.`JOB`, `$cor0`.`MGR`, `$cor0`.`HIREDATE`,"
             + " `$cor0`.`SAL`, `$cor0`.`COMM`, `$cor0`.`DEPTNO`, `t3`.`max(SAL)`\n"
             + "FROM (SELECT `EMPNO`, `ENAME`, `JOB`, `MGR`, `HIREDATE`, `SAL`, `COMM`, `DEPTNO`,"
-            + " ROW_NUMBER() OVER () `__stream_seq__`\n"
+            + " ROW_NUMBER() OVER () `__stream_seq__`, (ROW_NUMBER() OVER ()) - 4"
+            + " `__frame_lower__`\n"
             + "FROM `scott`.`EMP`) `$cor0`,\n"
             + "LATERAL (SELECT MAX(`SAL`) `max(SAL)`\n"
             + "FROM (SELECT `EMPNO`, `ENAME`, `JOB`, `MGR`, `HIREDATE`, `SAL`, `COMM`, `DEPTNO`,"
-            + " ROW_NUMBER() OVER () `__stream_seq__`\n"
+            + " ROW_NUMBER() OVER () `__stream_seq__`, (ROW_NUMBER() OVER ()) - 4"
+            + " `__frame_lower__`\n"
             + "FROM `scott`.`EMP`) `t0`\n"
-            + "WHERE `__stream_seq__` >= `$cor0`.`__stream_seq__` - 4 AND `__stream_seq__` <="
+            + "WHERE `__stream_seq__` >= `$cor0`.`__frame_lower__` AND `__stream_seq__` <="
             + " `$cor0`.`__stream_seq__` AND (`DEPTNO` = `$cor0`.`DEPTNO` OR `DEPTNO` IS NULL AND"
             + " `$cor0`.`DEPTNO` IS NULL)) `t3`\n"
             + "ORDER BY `$cor0`.`__stream_seq__` NULLS LAST";
@@ -249,5 +255,57 @@ public class CalcitePPLStreamstatsTest extends CalcitePPLAbstractTest {
             + "FROM `scott`.`EMP`) `t`\n"
             + "ORDER BY `__stream_seq__` DESC NULLS FIRST";
     verifyPPLToSparkSQL(root, expectedSparkSql);
+  }
+
+  @Test
+  public void testChainedStreamstatsWithWindowDecorrelation() {
+    // Reproducer for #4800: chained streamstats with window+by should survive decorrelation
+    // Pattern: window+by (correlate) => window+by (correlate) with different grouping
+    String ppl =
+        "source=EMP | streamstats window=2 max(SAL) as max_sal by JOB, DEPTNO"
+            + " | streamstats window=2 avg(max_sal) as avg_sal by DEPTNO";
+    RelNode root = getRelNode(ppl);
+    // Apply CorrelateProjectExtractor (same as RelDecorrelator internals)
+    org.apache.calcite.sql2rel.CorrelateProjectExtractor extractor =
+        new org.apache.calcite.sql2rel.CorrelateProjectExtractor(
+            RelBuilder.proto(root.getCluster().getPlanner().getContext()));
+    RelNode extracted = root.accept(extractor);
+    System.out.println("=== After CorrelateProjectExtractor ===");
+    System.out.println(RelOptUtil.toString(extracted));
+    // Now decorrelate
+    RelBuilder relBuilder =
+        RelBuilder.proto(root.getCluster().getPlanner().getContext())
+            .create(root.getCluster(), null);
+    RelNode decorrelated = RelDecorrelator.decorrelateQuery(root, relBuilder);
+    System.out.println("=== After full decorrelation ===");
+    System.out.println(RelOptUtil.toString(decorrelated));
+  }
+
+  @Test
+  public void testChainedStreamstatsResetThenWindowDecorrelation() {
+    // Reproducer for #4800: reset_before followed by reset_before+window+by
+    String ppl =
+        "source=EMP | streamstats reset_before=SAL>100 max(SAL) as max_sal"
+            + " | streamstats reset_before=max_sal>100 window=2 avg(max_sal) as avg_sal by DEPTNO";
+    RelNode root = getRelNode(ppl);
+    RelBuilder relBuilder =
+        RelBuilder.proto(root.getCluster().getPlanner().getContext())
+            .create(root.getCluster(), null);
+    RelNode decorrelated = RelDecorrelator.decorrelateQuery(root, relBuilder);
+    System.out.println(RelOptUtil.toString(decorrelated));
+  }
+
+  @Test
+  public void testChainedStreamstatsResetThenWindowOnlyDecorrelation() {
+    // Reproducer for #4800 variant: reset_before followed by window+by (no reset)
+    String ppl =
+        "source=EMP | streamstats reset_before=SAL>100 max(SAL) as max_sal"
+            + " | streamstats window=2 avg(max_sal) as avg_sal by DEPTNO";
+    RelNode root = getRelNode(ppl);
+    RelBuilder relBuilder =
+        RelBuilder.proto(root.getCluster().getPlanner().getContext())
+            .create(root.getCluster(), null);
+    RelNode decorrelated = RelDecorrelator.decorrelateQuery(root, relBuilder);
+    System.out.println(RelOptUtil.toString(decorrelated));
   }
 }
