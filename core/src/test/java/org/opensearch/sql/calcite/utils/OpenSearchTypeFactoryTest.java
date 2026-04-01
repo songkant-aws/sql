@@ -126,4 +126,67 @@ public class OpenSearchTypeFactoryTest {
     assertNotNull(result);
     assertEquals(SqlTypeName.INTEGER, result.getSqlTypeName());
   }
+
+  @Test
+  public void testLeastRestrictiveNullAndPlainTypeReturnsPlainNullable() {
+    RelDataType nullType = TYPE_FACTORY.createSqlType(SqlTypeName.NULL);
+    RelDataType intType = TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER);
+
+    RelDataType result = TYPE_FACTORY.leastRestrictive(List.of(nullType, intType));
+
+    assertNotNull(result);
+    assertEquals(SqlTypeName.INTEGER, result.getSqlTypeName());
+    assertTrue(result.isNullable());
+  }
+
+  @Test
+  public void testLeastRestrictivePlainTypeAndNullReturnsPlainNullable() {
+    RelDataType intType = TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER);
+    RelDataType nullType = TYPE_FACTORY.createSqlType(SqlTypeName.NULL);
+
+    RelDataType result = TYPE_FACTORY.leastRestrictive(List.of(intType, nullType));
+
+    assertNotNull(result);
+    assertEquals(SqlTypeName.INTEGER, result.getSqlTypeName());
+    assertTrue(result.isNullable());
+  }
+
+  @Test
+  public void testLeastRestrictiveNullAndUdtReturnsUdtNullable() {
+    RelDataType nullType = TYPE_FACTORY.createSqlType(SqlTypeName.NULL);
+    RelDataType tsUdt = TYPE_FACTORY.createUDT(ExprUDT.EXPR_TIMESTAMP, false);
+
+    RelDataType result = TYPE_FACTORY.leastRestrictive(List.of(nullType, tsUdt));
+
+    assertNotNull(result);
+    assertInstanceOf(AbstractExprRelDataType.class, result);
+    assertEquals(ExprUDT.EXPR_TIMESTAMP, ((AbstractExprRelDataType<?>) result).getUdt());
+    assertTrue(result.isNullable());
+  }
+
+  @Test
+  public void testLeastRestrictiveUdtAndNullReturnsUdtNullable() {
+    RelDataType tsUdt = TYPE_FACTORY.createUDT(ExprUDT.EXPR_TIMESTAMP, false);
+    RelDataType nullType = TYPE_FACTORY.createSqlType(SqlTypeName.NULL);
+
+    RelDataType result = TYPE_FACTORY.leastRestrictive(List.of(tsUdt, nullType));
+
+    assertNotNull(result);
+    assertInstanceOf(AbstractExprRelDataType.class, result);
+    assertEquals(ExprUDT.EXPR_TIMESTAMP, ((AbstractExprRelDataType<?>) result).getUdt());
+    assertTrue(result.isNullable());
+  }
+
+  @Test
+  public void testLeastRestrictiveNullAndMultipleTypesReturnsCommonNullable() {
+    RelDataType nullType = TYPE_FACTORY.createSqlType(SqlTypeName.NULL);
+    RelDataType int1 = TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER);
+    RelDataType int2 = TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER);
+
+    RelDataType result = TYPE_FACTORY.leastRestrictive(List.of(nullType, int1, int2));
+
+    assertNotNull(result);
+    assertEquals(SqlTypeName.INTEGER, result.getSqlTypeName());
+    assertTrue(result.isNullable());
+  }
 }

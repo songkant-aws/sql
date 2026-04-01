@@ -396,6 +396,29 @@ public class OpenSearchTypeFactory extends JavaTypeFactoryImpl {
   @Override
   public @Nullable RelDataType leastRestrictive(List<RelDataType> types) {
     if (types.size() > 1) {
+      // Filter out NULL-literal types; their presence only affects nullability.
+      boolean hasNull = false;
+      List<RelDataType> nonNullTypes = new ArrayList<>();
+      for (RelDataType t : types) {
+        if (t.getSqlTypeName() == SqlTypeName.NULL) {
+          hasNull = true;
+        } else {
+          nonNullTypes.add(t);
+        }
+      }
+      if (hasNull && !nonNullTypes.isEmpty()) {
+        RelDataType result;
+        if (nonNullTypes.size() == 1) {
+          result = nonNullTypes.get(0);
+        } else {
+          result = leastRestrictive(nonNullTypes);
+        }
+        if (result != null && !result.isNullable()) {
+          return createTypeWithNullability(result, true);
+        }
+        return result;
+      }
+
       RelDataType first = types.get(0);
       if (first instanceof AbstractExprRelDataType<?> firstUdt) {
         boolean anyNullable = false;
