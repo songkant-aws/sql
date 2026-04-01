@@ -16,16 +16,19 @@ import static org.opensearch.sql.data.type.ExprCoreType.BOOLEAN;
 import static org.opensearch.sql.data.type.ExprCoreType.STRING;
 
 import com.google.common.collect.ImmutableList;
+import java.util.List;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.opensearch.sql.data.model.ExprCollectionValue;
 import org.opensearch.sql.data.model.ExprMissingValue;
 import org.opensearch.sql.data.model.ExprNullValue;
 import org.opensearch.sql.data.model.ExprStringValue;
 import org.opensearch.sql.data.model.ExprValue;
+import org.opensearch.sql.data.model.ExprValueUtils;
 import org.opensearch.sql.exception.SemanticCheckException;
 import org.opensearch.sql.expression.DSL;
 import org.opensearch.sql.expression.Expression;
@@ -111,5 +114,47 @@ class PatternsExpressionTest extends ExpressionTestBase {
     assertEquals(
         ImmutableList.of("specified_field"),
         PatternsExpression.getNamedGroupCandidates("specified_field"));
+  }
+
+  @Test
+  public void resolve_patterns_on_array_field_returns_null_for_all_empty_results() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(stringValue("abc123"), stringValue("def456"), stringValue("ghi789"))));
+
+    // All elements are purely alphanumeric; default patterns removes all, yielding "" for each
+    assertEquals(
+        LITERAL_NULL,
+        DSL.patterns(DSL.ref("log_value", STRING), DSL.literal(""), DSL.literal("punct_field"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_patterns_on_array_field_with_punctuation() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(stringValue("abc123"), stringValue("hello-world!"), stringValue("foo"))));
+
+    // "abc123" -> "" (all alphanumeric removed), skip
+    // "hello-world!" -> "-!" (non-alphanumeric kept), match
+    assertEquals(
+        stringValue("-!"),
+        DSL.patterns(DSL.ref("log_value", STRING), DSL.literal(""), DSL.literal("punct_field"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_patterns_on_array_field_skips_null_elements() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(ExprValueUtils.nullValue(), stringValue("test-value!"))));
+
+    assertEquals(
+        stringValue("-!"),
+        DSL.patterns(DSL.ref("log_value", STRING), DSL.literal(""), DSL.literal("punct_field"))
+            .valueOf(env));
   }
 }

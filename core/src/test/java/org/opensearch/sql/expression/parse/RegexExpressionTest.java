@@ -25,7 +25,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.opensearch.sql.data.model.ExprCollectionValue;
 import org.opensearch.sql.data.model.ExprValue;
+import org.opensearch.sql.data.model.ExprValueUtils;
 import org.opensearch.sql.exception.SemanticCheckException;
 import org.opensearch.sql.expression.DSL;
 import org.opensearch.sql.expression.Expression;
@@ -128,5 +130,55 @@ class RegexExpressionTest extends ExpressionTestBase {
                     DSL.literal("(?<group>\\w{2})\\w"),
                     DSL.literal("group"))
                 .valueOf(valueEnv()));
+  }
+
+  @Test
+  public void resolve_regex_on_array_field_matches_across_all_elements() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(
+                    stringValue("no-match-here"),
+                    stringValue("test 123 data"),
+                    stringValue("test 789 data"))));
+
+    // First element has no digits so fails; second element matches and extracts "123"
+    assertEquals(
+        stringValue("123"),
+        DSL.regex(
+                DSL.ref("log_value", STRING),
+                DSL.literal("\\D*(?<digits>\\d+)\\D*"),
+                DSL.literal("digits"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_regex_on_array_field_returns_null_when_no_element_matches() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(stringValue("no-match"), stringValue("also-no-match"))));
+
+    assertEquals(
+        LITERAL_NULL,
+        DSL.regex(
+                DSL.ref("log_value", STRING), DSL.literal("(?<digits>\\d+)"), DSL.literal("digits"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_regex_on_array_field_skips_null_elements() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(ExprValueUtils.nullValue(), stringValue("test 123 data"))));
+
+    assertEquals(
+        stringValue("123"),
+        DSL.regex(
+                DSL.ref("log_value", STRING),
+                DSL.literal("\\D*(?<digits>\\d+)\\D*"),
+                DSL.literal("digits"))
+            .valueOf(env));
   }
 }

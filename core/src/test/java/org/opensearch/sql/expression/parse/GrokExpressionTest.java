@@ -25,7 +25,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.opensearch.sql.data.model.ExprCollectionValue;
 import org.opensearch.sql.data.model.ExprValue;
+import org.opensearch.sql.data.model.ExprValueUtils;
 import org.opensearch.sql.exception.SemanticCheckException;
 import org.opensearch.sql.expression.DSL;
 import org.opensearch.sql.expression.Expression;
@@ -131,5 +133,56 @@ class GrokExpressionTest extends ExpressionTestBase {
                     DSL.literal("%{COMMONAPACHELOG}"),
                     DSL.literal("request"))
                 .valueOf(valueEnv()));
+  }
+
+  @Test
+  public void resolve_grok_on_array_field_matches_across_all_elements() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(
+                    stringValue("no-match-here"),
+                    stringValue("192.168.1.1 some text"),
+                    stringValue("10.0.0.1 other text"))));
+
+    assertEquals(
+        stringValue("192.168.1.1"),
+        DSL.grok(
+                DSL.ref("log_value", STRING),
+                DSL.literal("%{IP:clientip}"),
+                DSL.literal("clientip"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_grok_on_array_field_returns_null_when_no_element_matches() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(stringValue("no-match"), stringValue("also-no-match"))));
+
+    assertEquals(
+        LITERAL_NULL,
+        DSL.grok(
+                DSL.ref("log_value", STRING),
+                DSL.literal("%{IP:clientip}"),
+                DSL.literal("clientip"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_grok_on_array_field_skips_null_elements() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(
+            new ExprCollectionValue(
+                List.of(ExprValueUtils.nullValue(), stringValue("192.168.1.1 data"))));
+
+    assertEquals(
+        stringValue("192.168.1.1"),
+        DSL.grok(
+                DSL.ref("log_value", STRING),
+                DSL.literal("%{IP:clientip}"),
+                DSL.literal("clientip"))
+            .valueOf(env));
   }
 }
