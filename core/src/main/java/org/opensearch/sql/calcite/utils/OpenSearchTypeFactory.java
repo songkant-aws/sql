@@ -295,7 +295,7 @@ public class OpenSearchTypeFactory extends JavaTypeFactoryImpl {
       case DATE:
       case TIME:
       case TIMESTAMP:
-        return ExprValueUtils.fromObjectValue(value);
+        return ExprValueUtils.fromObjectValue(value, type);
       case IP:
         return ExprValueUtils.ipValue((String) value);
       case ARRAY:

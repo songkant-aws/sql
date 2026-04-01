@@ -171,13 +171,50 @@ public class ExprValueUtils {
 
   /** Construct ExprValue from Object with ExprCoreType. */
   public static ExprValue fromObjectValue(Object o, ExprType type) {
+    if (o == null) {
+      return LITERAL_NULL;
+    }
+    if (o instanceof ExprValue) {
+      return (ExprValue) o;
+    }
     switch (type) {
       case TIMESTAMP:
-        return new ExprTimestampValue((String) o);
+        if (o instanceof String) {
+          return new ExprTimestampValue((String) o);
+        } else if (o instanceof Long) {
+          // Calcite represents TIMESTAMP as millis since epoch
+          return new ExprTimestampValue(Instant.ofEpochMilli((Long) o));
+        } else if (o instanceof Integer) {
+          // Calcite DATE (days since epoch) coerced to TIMESTAMP
+          return new ExprTimestampValue(
+              LocalDate.ofEpochDay((Integer) o).atStartOfDay().toInstant(ZoneOffset.UTC));
+        } else {
+          return fromObjectValue(o);
+        }
       case DATE:
-        return new ExprDateValue((String) o);
+        if (o instanceof String) {
+          return new ExprDateValue((String) o);
+        } else if (o instanceof Integer) {
+          // Calcite represents DATE as days since epoch
+          return new ExprDateValue(LocalDate.ofEpochDay((Integer) o));
+        } else if (o instanceof Long) {
+          // Calcite TIMESTAMP (millis since epoch) coerced to DATE
+          return new ExprDateValue(
+              Instant.ofEpochMilli((Long) o).atZone(ZoneOffset.UTC).toLocalDate());
+        } else {
+          return fromObjectValue(o);
+        }
       case TIME:
-        return new ExprTimeValue((String) o);
+        if (o instanceof String) {
+          return new ExprTimeValue((String) o);
+        } else if (o instanceof Integer) {
+          // Calcite represents TIME as millis since midnight
+          return new ExprTimeValue(LocalTime.ofNanoOfDay((Integer) o * 1_000_000L));
+        } else if (o instanceof Long) {
+          return new ExprTimeValue(LocalTime.ofNanoOfDay((Long) o * 1_000_000L));
+        } else {
+          return fromObjectValue(o);
+        }
       default:
         return fromObjectValue(o);
     }
