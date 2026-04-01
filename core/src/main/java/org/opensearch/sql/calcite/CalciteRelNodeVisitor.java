@@ -655,7 +655,10 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
             "Source and target patterns have different wildcard counts");
       }
 
-      List<String> matchingFields = WildcardRenameUtils.matchFieldNames(sourcePattern, newNames);
+      List<String> matchingFields =
+          WildcardRenameUtils.matchFieldNames(sourcePattern, newNames).stream()
+              .filter(f -> !isMetadataField(f))
+              .collect(Collectors.toList());
 
       for (String fieldName : matchingFields) {
         String newName =

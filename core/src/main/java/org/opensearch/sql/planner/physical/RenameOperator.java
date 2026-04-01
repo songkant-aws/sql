@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
+import org.opensearch.sql.data.model.ExprMissingValue;
 import org.opensearch.sql.data.model.ExprTupleValue;
 import org.opensearch.sql.data.model.ExprValue;
 import org.opensearch.sql.data.model.ExprValueUtils;
@@ -77,9 +78,56 @@ public class RenameOperator extends PhysicalPlan {
           mapBuilder.put(bindName, tupleValue.get(bindName));
         }
       }
+      // Handle dotted-path renames (e.g. "message.info" -> "msg.info") where the tuple
+      // uses nested structs instead of flattened dotted keys.
+      for (Map.Entry<String, ReferenceExpression> entry : nameMapping.entrySet()) {
+        String sourcePath = entry.getKey();
+        if (sourcePath.contains(".") && !tupleValue.containsKey(sourcePath)) {
+          applyNestedRename(tupleValue, mapBuilder, sourcePath, entry.getValue().getAttr());
+        }
+      }
       return ExprTupleValue.fromExprValueMap(mapBuilder.build());
     } else {
       return inputValue;
     }
+  }
+
+  /**
+   * Apply rename on a nested struct path. For example, renaming "message.info" to "msg.info" when
+   * the tuple has {message: {info: "value"}} instead of a flat key "message.info".
+   */
+  private void applyNestedRename(
+      Map<String, ExprValue> tupleValue,
+      ImmutableMap.Builder<String, ExprValue> mapBuilder,
+      String sourcePath,
+      String targetPath) {
+    String[] sourceParts = sourcePath.split("\\.", 2);
+    String topLevelKey = sourceParts[0];
+    ExprValue topLevelValue = tupleValue.get(topLevelKey);
+    if (topLevelValue == null || STRUCT != topLevelValue.type()) {
+      return;
+    }
+    ExprValue nestedValue = resolveNestedValue(topLevelValue, sourceParts[1]);
+    if (nestedValue != null && !(nestedValue instanceof ExprMissingValue)) {
+      mapBuilder.put(targetPath, nestedValue);
+    }
+  }
+
+  /** Resolve a dotted path within a nested struct value. */
+  private ExprValue resolveNestedValue(ExprValue structValue, String remainingPath) {
+    if (STRUCT != structValue.type()) {
+      return null;
+    }
+    Map<String, ExprValue> nested = ExprValueUtils.getTupleValue(structValue);
+    int dotIndex = remainingPath.indexOf('.');
+    if (dotIndex < 0) {
+      return nested.get(remainingPath);
+    }
+    String nextKey = remainingPath.substring(0, dotIndex);
+    ExprValue nextValue = nested.get(nextKey);
+    if (nextValue == null) {
+      return null;
+    }
+    return resolveNestedValue(nextValue, remainingPath.substring(dotIndex + 1));
   }
 }

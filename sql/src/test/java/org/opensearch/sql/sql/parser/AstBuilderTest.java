@@ -8,6 +8,7 @@ package org.opensearch.sql.sql.parser;
 import static java.util.Collections.emptyList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.opensearch.sql.ast.dsl.AstDSL.agg;
 import static org.opensearch.sql.ast.dsl.AstDSL.aggregate;
 import static org.opensearch.sql.ast.dsl.AstDSL.alias;
@@ -586,5 +587,33 @@ class AstBuilderTest extends AstBuilderTestBase {
             relation("test"),
             alias("highlight(\"fieldA\")", highlight(AstDSL.stringLiteral("fieldA"), args))),
         buildAST("SELECT highlight(\"fieldA\") FROM test"));
+  }
+
+  @Test
+  public void reject_duplicate_select_column_names() {
+    SyntaxCheckException ex =
+        assertThrows(SyntaxCheckException.class, () -> buildAST("SELECT age, age FROM test"));
+    assertTrue(ex.getMessage().contains("Duplicate column name or alias"));
+  }
+
+  @Test
+  public void reject_duplicate_select_aliases() {
+    SyntaxCheckException ex =
+        assertThrows(
+            SyntaxCheckException.class,
+            () -> buildAST("SELECT age AS a, name AS a FROM test"));
+    assertTrue(ex.getMessage().contains("Duplicate column name or alias"));
+  }
+
+  @Test
+  public void allow_distinct_select_column_names() {
+    // Should not throw
+    buildAST("SELECT age, name FROM test");
+  }
+
+  @Test
+  public void allow_same_column_different_aliases() {
+    // Should not throw - same column but different aliases
+    buildAST("SELECT age AS a, age AS b FROM test");
   }
 }

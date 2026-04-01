@@ -120,7 +120,27 @@ public class AstBuilder extends OpenSearchSQLParserBaseVisitor<UnresolvedPlan> {
       builder.add(AllFields.of());
     }
     ctx.selectElements().selectElement().forEach(field -> builder.add(visitSelectItem(field)));
-    return new Project(builder.build());
+    ImmutableList<UnresolvedExpression> selectItems = builder.build();
+    checkDuplicateColumnNames(selectItems);
+    return new Project(selectItems);
+  }
+
+  /**
+   * Validate that SELECT column names (aliases or expression names) are unique. Duplicate output
+   * column names cause ambiguity in the result set and downstream processing.
+   */
+  private void checkDuplicateColumnNames(ImmutableList<UnresolvedExpression> selectItems) {
+    java.util.Set<String> seen = new java.util.HashSet<>();
+    for (UnresolvedExpression item : selectItems) {
+      if (item instanceof Alias) {
+        Alias alias = (Alias) item;
+        String outputName = alias.getAlias() != null ? alias.getAlias() : alias.getName();
+        if (!seen.add(outputName)) {
+          throw new SyntaxCheckException(
+              String.format("Duplicate column name or alias: %s", outputName));
+        }
+      }
+    }
   }
 
   @Override
