@@ -308,8 +308,11 @@ public class JoinIT extends SQLIntegTestCase {
     JSONArray hits = getHits(result);
     Assert.assertThat(hits.length(), equalTo(2));
 
-    Assert.assertThat(hits.query("/0/_source/p2.description"), equalTo("squareRelated"));
-    Assert.assertThat(hits.query("/1/_source/p2.description"), equalTo("squareRelated"));
+    // Verify all rows have expected value without assuming order
+    for (int i = 0; i < hits.length(); i++) {
+      Assert.assertThat(
+          hits.query("/" + i + "/_source/p2.description"), equalTo("squareRelated"));
+    }
   }
 
   // TODO: resolve issue #25 in github and update the test if needed

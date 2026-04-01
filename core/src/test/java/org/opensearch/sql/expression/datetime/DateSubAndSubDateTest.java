@@ -157,7 +157,7 @@ public class DateSubAndSubDateTest extends DateTimeTestBase {
     assertEquals(TIMESTAMP, res.type());
     assertEquals(LocalDateTime.of(1999, 12, 30, 0, 0), toLocalDateTime(res));
 
-    res = subdate(LocalTime.now(), 2);
+    res = subdate(LocalTime.of(14, 30, 0), 2);
     assertEquals(TIMESTAMP, res.type());
     assertEquals(today().minusDays(2), res.dateValue());
 

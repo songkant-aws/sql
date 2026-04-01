@@ -46,7 +46,7 @@ public class SystemFunctionsTest {
     assertEquals("NESTED", typeofGetValue(new ExprCollectionValue(List.of())));
     assertEquals("BOOLEAN", typeofGetValue(ExprBooleanValue.of(false)));
     assertEquals("BYTE", typeofGetValue(new ExprByteValue(0)));
-    assertEquals("DATE", typeofGetValue(new ExprDateValue(LocalDate.now())));
+    assertEquals("DATE", typeofGetValue(new ExprDateValue(LocalDate.of(2023, 5, 15))));
     assertEquals("DOUBLE", typeofGetValue(new ExprDoubleValue(0)));
     assertEquals("FLOAT", typeofGetValue(new ExprFloatValue(0)));
     assertEquals("INTEGER", typeofGetValue(new ExprIntegerValue(0)));
@@ -55,8 +55,9 @@ public class SystemFunctionsTest {
     assertEquals("SHORT", typeofGetValue(new ExprShortValue(0)));
     assertEquals("KEYWORD", typeofGetValue(new ExprStringValue("")));
     assertEquals("OBJECT", typeofGetValue(new ExprTupleValue(new LinkedHashMap<>())));
-    assertEquals("TIME", typeofGetValue(new ExprTimeValue(LocalTime.now())));
-    assertEquals("TIMESTAMP", typeofGetValue(new ExprTimestampValue(Instant.now())));
+    assertEquals("TIME", typeofGetValue(new ExprTimeValue(LocalTime.of(12, 0, 0))));
+    assertEquals(
+        "TIMESTAMP", typeofGetValue(new ExprTimestampValue(Instant.parse("2023-05-15T12:00:00Z"))));
     assertEquals("UNDEFINED", typeofGetValue(ExprNullValue.of()));
     assertEquals("UNDEFINED", typeofGetValue(ExprMissingValue.of()));
     assertEquals(

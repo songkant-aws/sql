@@ -96,7 +96,7 @@ class BinaryPredicateOperatorTest extends ExpressionTestBase {
         List.of(LocalDate.of(1961, 4, 12), LocalDate.of(1984, 10, 25)),
         List.of(Instant.ofEpochSecond(42), Instant.ofEpochSecond(100500)),
         List.of(LocalDateTime.of(1961, 4, 12, 9, 7, 0), LocalDateTime.of(1984, 10, 25, 7, 40)),
-        List.of(LocalDate.of(1961, 4, 12), LocalTime.now().minusHours(1)),
+        List.of(LocalDate.of(1961, 4, 12), LocalTime.of(10, 30, 0)),
         List.of(LocalDate.of(1961, 4, 12), LocalDateTime.of(1984, 10, 25, 7, 40)),
         List.of(Instant.ofEpochSecond(100500), LocalDate.of(1961, 4, 12)),
         List.of(Instant.ofEpochSecond(100500), LocalTime.of(7, 40, 0)),
@@ -113,7 +113,7 @@ class BinaryPredicateOperatorTest extends ExpressionTestBase {
     builder.add(
         Arguments.of(
             fromObjectValue(LocalTime.of(7, 40, 0)),
-            fromObjectValue(LocalTime.of(7, 40, 0).atDate(LocalDate.now()))));
+            fromObjectValue(LocalTime.of(7, 40, 0).atDate(LocalDate.of(2023, 5, 15)))));
     builder.add(
         Arguments.of(
             fromObjectValue(LocalDateTime.of(1970, 1, 1, 0, 0, 42)),
@@ -126,11 +126,14 @@ class BinaryPredicateOperatorTest extends ExpressionTestBase {
             fromObjectValue(LocalDate.of(1984, 10, 25)),
             fromObjectValue(LocalDateTime.of(1984, 10, 25, 0, 0))));
     builder.add(
-        Arguments.of(fromObjectValue(LocalTime.of(0, 0, 0)), fromObjectValue(LocalDate.now())));
+        Arguments.of(
+            fromObjectValue(LocalTime.of(0, 0, 0)),
+            fromObjectValue(LocalDate.of(2023, 5, 15))));
     builder.add(
         Arguments.of(
             fromObjectValue(LocalTime.of(0, 0, 0)),
-            fromObjectValue(LocalDate.now().atStartOfDay(ZoneId.of("UTC")).toInstant())));
+            fromObjectValue(
+                LocalDate.of(2023, 5, 15).atStartOfDay(ZoneId.of("UTC")).toInstant())));
     builder.add(
         Arguments.of(fromObjectValue(ImmutableList.of(1)), fromObjectValue(ImmutableList.of(1))));
     builder.add(

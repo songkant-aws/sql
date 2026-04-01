@@ -175,7 +175,7 @@ public class DateAddAndAddDateTest extends DateTimeTestBase {
         LocalDateTime.of(2000, 1, 3, 0, 0),
         res.timestampValue().atZone(ZoneOffset.UTC).toLocalDateTime());
 
-    res = adddate(LocalTime.now(), 2);
+    res = adddate(LocalTime.of(14, 30, 0), 2);
     assertEquals(TIMESTAMP, res.type());
     assertEquals(today().plusDays(2), res.dateValue());
 

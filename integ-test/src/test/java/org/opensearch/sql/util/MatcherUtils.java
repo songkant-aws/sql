@@ -324,7 +324,12 @@ public class MatcherUtils {
       }
 
       private boolean valuesAreClose(Number v1, Number v2) {
-        return Math.abs(v1.doubleValue() - v2.doubleValue()) <= error;
+        double d1 = v1.doubleValue();
+        double d2 = v2.doubleValue();
+        double diff = Math.abs(d1 - d2);
+        // Use relative tolerance for large values, absolute tolerance for small values
+        double relativeTolerance = Math.max(Math.abs(d1), Math.abs(d2)) * 1e-9;
+        return diff <= Math.max(error, relativeTolerance);
       }
     };
   }

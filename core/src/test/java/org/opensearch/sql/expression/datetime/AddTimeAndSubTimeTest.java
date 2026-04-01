@@ -50,7 +50,7 @@ public class AddTimeAndSubTimeTest extends DateTimeTestBase {
     assertEquals(TIME, res.type());
     assertEquals(LocalTime.of(2, 56, 4), res.timeValue());
 
-    res = addtime(LocalTime.of(9, 7), LocalDate.now());
+    res = addtime(LocalTime.of(9, 7), LocalDate.of(2023, 5, 15));
     assertEquals(TIME, res.type());
     assertEquals(LocalTime.of(9, 7), res.timeValue());
 
