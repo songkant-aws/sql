@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 import static org.opensearch.sql.data.type.ExprCoreType.DATE;
 import static org.opensearch.sql.data.type.ExprCoreType.FLOAT;
 import static org.opensearch.sql.data.type.ExprCoreType.INTEGER;
+import static org.opensearch.sql.data.type.ExprCoreType.LONG;
 import static org.opensearch.sql.data.type.ExprCoreType.STRING;
 import static org.opensearch.sql.data.type.ExprCoreType.TIME;
 import static org.opensearch.sql.data.type.ExprCoreType.TIMESTAMP;
@@ -74,6 +75,31 @@ class ExpressionFilterScriptTest {
     assertThat()
         .docValues("age", 30L) // DocValue only supports long
         .filterBy(DSL.greater(ref("age", INTEGER), literal(20)))
+        .shouldMatch();
+  }
+
+  @Test
+  void can_execute_expression_with_multivalue_integer_field() {
+    // Multivalue field: doc_values returns List; unwrapMultivalue extracts first element
+    assertThat()
+        .docValues("age", List.of(30L, 40L))
+        .filterBy(DSL.greater(ref("age", INTEGER), literal(20)))
+        .shouldMatch();
+  }
+
+  @Test
+  void can_execute_expression_with_multivalue_long_field() {
+    assertThat()
+        .docValues("count", List.of(100L, 200L))
+        .filterBy(DSL.greater(ref("count", LONG), literal(50L)))
+        .shouldMatch();
+  }
+
+  @Test
+  void can_execute_expression_with_multivalue_float_field() {
+    assertThat()
+        .docValues("balance", List.of(100.0, 200.0))
+        .filterBy(DSL.less(ref("balance", FLOAT), literal(150.0F)))
         .shouldMatch();
   }
 

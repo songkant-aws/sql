@@ -12,6 +12,7 @@ import static org.opensearch.sql.data.type.ExprCoreType.INTEGER;
 import java.time.chrono.ChronoZonedDateTime;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -119,6 +120,8 @@ public class ExpressionScript {
     }
 
     Object value = docValue.get(0);
+    // Multivalue fields may return a List even from get(0); unwrap to first scalar element.
+    value = unwrapMultivalue(value);
     if (value instanceof ChronoZonedDateTime) {
       return ((ChronoZonedDateTime<?>) value).toInstant();
     }
@@ -136,11 +139,23 @@ public class ExpressionScript {
     }
 
     if (type == INTEGER) {
-      return ((Long) value).intValue();
+      return ((Number) value).intValue();
     } else if (type == FLOAT) {
-      return ((Double) value).floatValue();
+      return ((Number) value).floatValue();
     } else {
       return value;
     }
+  }
+
+  /**
+   * Unwrap a multivalue field value. OpenSearch may return a List (ArrayList) for scalar-mapped
+   * fields that contain multiple values at runtime. Extract the first element so downstream
+   * operators receive a scalar value instead of a collection.
+   */
+  private static Object unwrapMultivalue(Object value) {
+    if (value instanceof List<?> list) {
+      return list.isEmpty() ? null : list.get(0);
+    }
+    return value;
   }
 }
