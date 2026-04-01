@@ -40,7 +40,18 @@ public class LambdaUtils {
 
   public static RelDataType inferReturnTypeFromLambda(
       RexLambda rexLambda, Map<String, RelDataType> filledTypes, RelDataTypeFactory typeFactory) {
-    RexCall rexCall = (RexCall) rexLambda.getExpression();
+    RexNode expression = rexLambda.getExpression();
+
+    // Handle non-RexCall lambda bodies (e.g., identity lambda `acc -> acc` where body is
+    // RexLambdaRef, or constant lambda `x -> 42` where body is RexLiteral).
+    if (expression instanceof RexLambdaRef rexLambdaRef) {
+      RelDataType filledType = filledTypes.get(rexLambdaRef.getName());
+      return filledType != null ? filledType : rexLambdaRef.getType();
+    }
+    if (!(expression instanceof RexCall rexCall)) {
+      return expression.getType();
+    }
+
     SqlReturnTypeInference returnInfer = rexCall.getOperator().getReturnTypeInference();
     List<RexNode> lambdaOperands = rexCall.getOperands();
     List<RexNode> filledOperands = new ArrayList<>();

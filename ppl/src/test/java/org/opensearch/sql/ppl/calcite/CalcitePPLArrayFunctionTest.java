@@ -5,7 +5,12 @@
 
 package org.opensearch.sql.ppl.calcite;
 
+import static org.junit.Assert.assertNotEquals;
+
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.sql.type.ArraySqlType;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.test.CalciteAssert;
 import org.junit.Test;
 
@@ -588,6 +593,51 @@ public class CalcitePPLArrayFunctionTest extends CalcitePPLAbstractTest {
             + "FROM `scott`.`EMP`\n"
             + "LIMIT 1";
     verifyPPLToSparkSQL(root, expectedSparkSql);
+  }
+
+  @Test
+  public void testTransformReturnTypeInference() {
+    // Issue #4972: transform return type should be derived from lambda body, not ANY
+    String ppl =
+        "source=EMP | eval array = array(1, -2, 3), result = transform(array, x -> x + 2)"
+            + " | head 1 | fields result";
+    RelNode root = getRelNode(ppl);
+
+    RelDataType resultType = root.getRowType().getFieldList().get(0).getType();
+    SqlTypeName componentTypeName = ((ArraySqlType) resultType).getComponentType().getSqlTypeName();
+    assertNotEquals(
+        "Transform should infer return type from lambda body, not ANY",
+        SqlTypeName.ANY,
+        componentTypeName);
+
+    String expectedLogical =
+        "LogicalProject(result=[$9])\n"
+            + "  LogicalSort(fetch=[1])\n"
+            + "    LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4],"
+            + " SAL=[$5], COMM=[$6], DEPTNO=[$7], array=[array(1, -2, 3)],"
+            + " result=[transform(array(1, -2, 3), (x) -> +(x, 2))])\n"
+            + "      LogicalTableScan(table=[[scott, EMP]])\n";
+    verifyLogical(root, expectedLogical);
+  }
+
+  @Test
+  public void testReduceWithIdentityFinishLambda() {
+    // Identity finish lambda: acc -> acc (body is RexLambdaRef, not RexCall)
+    // This previously caused ClassCastException in LambdaUtils.inferReturnTypeFromLambda
+    String ppl =
+        "source=EMP | eval array = array(1, 2, 3),"
+            + " result = reduce(array, 0, (acc, x) -> acc + x, acc -> acc)"
+            + " | head 1 | fields result";
+    RelNode root = getRelNode(ppl);
+
+    RelDataType resultType = root.getRowType().getFieldList().get(0).getType();
+    assertNotEquals(
+        "Reduce with identity finish should infer correct type, not ANY",
+        SqlTypeName.ANY,
+        resultType.getSqlTypeName());
+
+    String expectedResult = "result=6\n";
+    verifyResult(root, expectedResult);
   }
 
   @Test
