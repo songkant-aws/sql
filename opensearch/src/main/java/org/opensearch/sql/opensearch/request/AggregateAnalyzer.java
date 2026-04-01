@@ -345,7 +345,7 @@ public class AggregateAnalyzer {
     Builder newMetricBuilder = new AggregatorFactories.Builder();
     copy.forEach(newMetricBuilder::addAggregator);
 
-    if (countAllOnly || supportCountFiled(countAggregatorFactories, metricBuilder)) {
+    if (countAllOnly || supportCountField(countAggregatorFactories, metricBuilder)) {
       List<String> countAggNameList =
           countAggregatorFactories.stream().map(ValuesSourceAggregationBuilder::getName).toList();
       if (newMetricBuilder.getAggregatorFactories().isEmpty()) {
@@ -356,14 +356,16 @@ public class AggregateAnalyzer {
     return Pair.of(List.of(), metricBuilder);
   }
 
-  private static boolean supportCountFiled(
+  /**
+   * Check if all count aggregations can be replaced by totalHits. Only count() (i.e., count with
+   * _index metadata field) can use totalHits optimization. count(FIELD) must NOT use totalHits
+   * because it should exclude NULL values, while totalHits counts all documents.
+   */
+  private static boolean supportCountField(
       List<ValueCountAggregationBuilder> countAggBuilderList, Builder metricBuilder) {
     return countAggBuilderList.size() == metricBuilder.getAggregatorFactories().size()
         && countAggBuilderList.stream()
-                .map(ValuesSourceAggregationBuilder::fieldName)
-                .distinct()
-                .count()
-            == 1;
+            .allMatch(vc -> vc.fieldName().equals(METADATA_FIELD));
   }
 
   private static Pair<Builder, List<MetricParser>> processAggregateCalls(

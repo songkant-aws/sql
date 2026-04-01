@@ -49,6 +49,7 @@ import org.opensearch.sql.opensearch.request.AggregateAnalyzer.ExpressionNotAnal
 import org.opensearch.sql.opensearch.response.agg.BucketAggregationParser;
 import org.opensearch.sql.opensearch.response.agg.FilterParser;
 import org.opensearch.sql.opensearch.response.agg.MetricParserHelper;
+import org.opensearch.sql.opensearch.response.agg.CountAsTotalHitsParser;
 import org.opensearch.sql.opensearch.response.agg.NoBucketAggregationParser;
 import org.opensearch.sql.opensearch.response.agg.OpenSearchAggregationResponseParser;
 import org.opensearch.sql.opensearch.response.agg.SingleValueParser;
@@ -174,6 +175,126 @@ class AggregateAnalyzerTest {
               assertTrue(outputFields.contains(k));
               assertInstanceOf(SingleValueParser.class, v);
             });
+  }
+
+  @Test
+  void analyze_countField_shouldNotUseTotalHits() throws ExpressionNotAnalyzableException {
+    // count(field) should use value_count, NOT totalHits, because count(field) excludes NULLs
+    AggregateCall countFieldCall =
+        AggregateCall.create(
+            SqlStdOperatorTable.COUNT,
+            false,
+            false,
+            false,
+            ImmutableList.of(),
+            ImmutableList.of(0),
+            -1,
+            null,
+            RelCollations.EMPTY,
+            typeFactory.createSqlType(SqlTypeName.INTEGER),
+            "cnt_field");
+    List<String> outputFields = List.of("cnt_field");
+    Aggregate aggregate =
+        createMockAggregate(List.of(countFieldCall), ImmutableBitSet.of());
+    Project project = createMockProject(List.of(0));
+    AggregateAnalyzer.AggregateBuilderHelper helper =
+        new AggregateAnalyzer.AggregateBuilderHelper(rowType, fieldTypes, null, true, BUCKET_SIZE);
+    Pair<List<AggregationBuilder>, OpenSearchAggregationResponseParser> result =
+        AggregateAnalyzer.analyze(aggregate, project, outputFields, helper);
+    // count(field) must produce value_count aggregation, not be optimized to totalHits
+    assertEquals("[{\"cnt_field\":{\"value_count\":{\"field\":\"a\"}}}]", result.getLeft().toString());
+    assertInstanceOf(NoBucketAggregationParser.class, result.getRight());
+  }
+
+  @Test
+  void analyze_countStar_shouldUseTotalHits() throws ExpressionNotAnalyzableException {
+    // count() with no args should use totalHits optimization
+    AggregateCall countStarCall =
+        AggregateCall.create(
+            SqlStdOperatorTable.COUNT,
+            false,
+            false,
+            false,
+            ImmutableList.of(),
+            ImmutableList.of(),
+            -1,
+            null,
+            RelCollations.EMPTY,
+            typeFactory.createSqlType(SqlTypeName.INTEGER),
+            "cnt");
+    List<String> outputFields = List.of("cnt");
+    Aggregate aggregate =
+        createMockAggregate(List.of(countStarCall), ImmutableBitSet.of());
+    Project project = createMockProject(List.of(0));
+    AggregateAnalyzer.AggregateBuilderHelper helper =
+        new AggregateAnalyzer.AggregateBuilderHelper(rowType, fieldTypes, null, true, BUCKET_SIZE);
+    Pair<List<AggregationBuilder>, OpenSearchAggregationResponseParser> result =
+        AggregateAnalyzer.analyze(aggregate, project, outputFields, helper);
+    // count() should be optimized to totalHits (no aggregation builders)
+    assertEquals(0, result.getLeft().size());
+    assertInstanceOf(CountAsTotalHitsParser.class, result.getRight());
+  }
+
+  @Test
+  void analyze_countDistinct_shouldUseCardinality() throws ExpressionNotAnalyzableException {
+    // COUNT(DISTINCT field) should use cardinality aggregation
+    AggregateCall countDistinctCall =
+        AggregateCall.create(
+            SqlStdOperatorTable.COUNT,
+            true, // distinct = true
+            false,
+            false,
+            ImmutableList.of(),
+            ImmutableList.of(0),
+            -1,
+            null,
+            RelCollations.EMPTY,
+            typeFactory.createSqlType(SqlTypeName.INTEGER),
+            "cnt_distinct");
+    List<String> outputFields = List.of("cnt_distinct");
+    Aggregate aggregate =
+        createMockAggregate(List.of(countDistinctCall), ImmutableBitSet.of());
+    Project project = createMockProject(List.of(0));
+    AggregateAnalyzer.AggregateBuilderHelper helper =
+        new AggregateAnalyzer.AggregateBuilderHelper(rowType, fieldTypes, null, true, BUCKET_SIZE);
+    Pair<List<AggregationBuilder>, OpenSearchAggregationResponseParser> result =
+        AggregateAnalyzer.analyze(aggregate, project, outputFields, helper);
+    // COUNT(DISTINCT field) must use cardinality aggregation
+    assertEquals(
+        "[{\"cnt_distinct\":{\"cardinality\":{\"field\":\"a\"}}}]", result.getLeft().toString());
+    assertInstanceOf(NoBucketAggregationParser.class, result.getRight());
+  }
+
+  @Test
+  void analyze_countDistinct_withGroupBy_shouldUseCardinality()
+      throws ExpressionNotAnalyzableException {
+    // COUNT(DISTINCT field) with group by should use cardinality as metric in bucket aggregation
+    AggregateCall countDistinctCall =
+        AggregateCall.create(
+            SqlStdOperatorTable.COUNT,
+            true, // distinct = true
+            false,
+            false,
+            ImmutableList.of(),
+            ImmutableList.of(0),
+            -1,
+            null,
+            RelCollations.EMPTY,
+            typeFactory.createSqlType(SqlTypeName.INTEGER),
+            "cnt_distinct");
+    List<String> outputFields = List.of("b", "cnt_distinct");
+    Aggregate aggregate =
+        createMockAggregate(List.of(countDistinctCall), ImmutableBitSet.of(1));
+    Project project = createMockProject(List.of(0, 1));
+    AggregateAnalyzer.AggregateBuilderHelper helper =
+        new AggregateAnalyzer.AggregateBuilderHelper(rowType, fieldTypes, null, true, BUCKET_SIZE);
+    Pair<List<AggregationBuilder>, OpenSearchAggregationResponseParser> result =
+        AggregateAnalyzer.analyze(aggregate, project, outputFields, helper);
+    // Should have composite bucket with cardinality as sub-aggregation
+    String dsl = result.getLeft().toString();
+    assertTrue(dsl.contains("cardinality"), "Should use cardinality aggregation: " + dsl);
+    assertTrue(dsl.contains("composite"), "Should have composite bucket: " + dsl);
+    assertInstanceOf(BucketAggregationParser.class, result.getRight());
   }
 
   @Test
