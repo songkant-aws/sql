@@ -68,6 +68,7 @@ import org.apache.calcite.rex.RexCorrelVariable;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.rex.RexWindowBounds;
 import org.apache.calcite.sql.SqlKind;
@@ -1154,6 +1155,12 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
                 String alias =
                     ((RexLiteral) ((RexCall) eval).getOperands().get(1)).getValueAs(String.class);
                 projectPlusOverriding(List.of(eval), List.of(alias), context);
+                // Force materialization of non-deterministic expressions (e.g., RAND()) so that
+                // subsequent references read the materialized value instead of re-evaluating.
+                RexNode exprBody = ((RexCall) eval).getOperands().get(0);
+                if (!RexUtil.isDeterministic(exprBody)) {
+                  materializeCurrentProject(context);
+                }
               }
             });
     return context.relBuilder.peek();
@@ -1293,6 +1300,24 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     expectedRenameFields.addAll(newNames);
     // 5. rename
     context.relBuilder.rename(expectedRenameFields);
+  }
+
+  /**
+   * Forces materialization of the current projection by building the current top node and pushing a
+   * new identity LogicalProject directly. This creates a barrier that prevents Calcite's RelBuilder
+   * from inlining non-deterministic expressions (e.g., RAND()) when they are referenced in
+   * subsequent projections, ensuring they are evaluated only once per row.
+   */
+  private void materializeCurrentProject(CalcitePlanContext context) {
+    RelNode current = context.relBuilder.build();
+    RelDataType rowType = current.getRowType();
+    List<RexNode> identityRefs = new ArrayList<>();
+    for (int i = 0; i < rowType.getFieldCount(); i++) {
+      RelDataType fieldType = rowType.getFieldList().get(i).getType();
+      identityRefs.add(context.rexBuilder.makeInputRef(fieldType, i));
+    }
+    RelNode barrier = LogicalProject.create(current, ImmutableList.of(), identityRefs, rowType);
+    context.relBuilder.push(barrier);
   }
 
   private boolean shouldOverrideField(String originalName, List<String> newNames) {

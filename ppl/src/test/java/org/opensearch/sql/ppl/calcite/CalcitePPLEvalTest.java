@@ -620,4 +620,56 @@ public class CalcitePPLEvalTest extends CalcitePPLAbstractTest {
             + "FROM `scott`.`EMP`";
     verifyPPLToSparkSQL(root, expectedSparkSql);
   }
+
+  @Test
+  public void testEvalNonDeterministicRandMaterialized() {
+    // RAND() is non-deterministic, so a materialization barrier (extra LogicalProject) must be
+    // inserted to prevent re-evaluation when the eval'd field is referenced later.
+    String ppl = "source=EMP | eval r = rand() | eval r2 = r + 1 | fields EMPNO, r, r2";
+    RelNode root = getRelNode(ppl);
+    // The materialization barrier ensures r2 references $8 (the materialized r column)
+    // instead of inlining RAND() again. The identity LogicalProject acts as the barrier.
+    String expectedLogical =
+        "LogicalProject(EMPNO=[$0], r=[$8], r2=[+($8, 1)])\n"
+            + "  LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4],"
+            + " SAL=[$5], COMM=[$6], DEPTNO=[$7], r=[$8])\n"
+            + "    LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4],"
+            + " SAL=[$5], COMM=[$6], DEPTNO=[$7], r=[RAND()])\n"
+            + "      LogicalTableScan(table=[[scott, EMP]])\n";
+    verifyLogical(root, expectedLogical);
+  }
+
+  @Test
+  public void testEvalNonDeterministicRandSameValuePerRow() {
+    // Verify that RAND() is evaluated only once per row: r and r2 = r + 1 must satisfy r2 = r + 1
+    String ppl = "source=EMP | eval r = rand() | eval r2 = r + 1 | fields r, r2";
+    RelNode root = getRelNode(ppl);
+    // Execute and verify each row satisfies r2 = r + 1
+    try (java.sql.PreparedStatement ps =
+        org.apache.calcite.tools.RelRunners.run(root)) {
+      java.sql.ResultSet rs = ps.executeQuery();
+      while (rs.next()) {
+        double r = rs.getDouble("r");
+        double r2 = rs.getDouble("r2");
+        org.junit.Assert.assertEquals(
+            "r2 should equal r + 1 (RAND() must be materialized once per row)",
+            r + 1.0,
+            r2,
+            1e-15);
+      }
+    } catch (java.sql.SQLException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @Test
+  public void testEvalDeterministicExpressionNoBarrier() {
+    // Deterministic expressions should NOT add a materialization barrier
+    String ppl = "source=EMP | eval a = SAL + 1 | eval b = a + 2 | fields EMPNO, a, b";
+    RelNode root = getRelNode(ppl);
+    String expectedLogical =
+        "LogicalProject(EMPNO=[$0], a=[+($5, 1)], b=[+(+($5, 1), 2)])\n"
+            + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    verifyLogical(root, expectedLogical);
+  }
 }
