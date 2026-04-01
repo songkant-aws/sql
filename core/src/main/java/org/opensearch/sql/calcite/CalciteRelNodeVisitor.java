@@ -3749,13 +3749,8 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
 
     final RexInputRef arrayFieldRex = (RexInputRef) rexVisitor.analyze(field, context);
 
-    final RelDataType fieldType = arrayFieldRex.getType();
-    if (!(SqlTypeUtil.isArray(fieldType) || SqlTypeUtil.isMultiset(fieldType))) {
-      // For non-array/multiset fields (scalars), mvexpand just returns the field unchanged.
-      // This treats single-value fields as if they were arrays with one element.
-      return relBuilder.peek();
-    }
-
+    // For scalar fields, buildExpandRelNode will coerce to ARRAY before UNNEST,
+    // so single-value fields are treated as one-element arrays.
     buildExpandRelNode(arrayFieldRex, fieldName, fieldName, mvExpand.getLimit(), context);
 
     return relBuilder.peek();
@@ -4023,12 +4018,20 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
             arrayFieldRex.getIndex());
     RelNode leftNode = context.relBuilder.build();
 
-    // 5. Build join right node and expand the array field using uncollect
+    // 5. Build join right node and expand the array field using uncollect.
+    // If the field type is scalar (not ARRAY/MULTISET), coerce it to an ARRAY so that
+    // uncollect (UNNEST) codegen succeeds for scalar-mapped multivalue fields.
+    RexNode fieldToUnnest = correlArrayFieldAccess;
+    RelDataType accessType = correlArrayFieldAccess.getType();
+    if (!(SqlTypeUtil.isArray(accessType) || SqlTypeUtil.isMultiset(accessType))) {
+      RelDataType arrayType = context.rexBuilder.getTypeFactory().createArrayType(accessType, -1);
+      fieldToUnnest = context.rexBuilder.makeCast(arrayType, correlArrayFieldAccess);
+    }
     context
         .relBuilder
         // fake input, see convertUnnest and convertExpression in Calcite SqlToRelConverter
         .push(LogicalValues.createOneRow(context.relBuilder.getCluster()))
-        .project(List.of(correlArrayFieldAccess), List.of(arrayFieldName))
+        .project(List.of(fieldToUnnest), List.of(arrayFieldName))
         .uncollect(List.of(), false);
 
     if (perDocLimit != null) {
