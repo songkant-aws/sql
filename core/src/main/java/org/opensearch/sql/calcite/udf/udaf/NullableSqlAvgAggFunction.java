@@ -29,12 +29,15 @@ package org.opensearch.sql.calcite.udf.udaf;
 
 import static com.google.common.base.Preconditions.checkArgument;
 
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlAvgAggFunction;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
+import org.apache.calcite.sql.type.SqlTypeFamily;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
 import org.apache.calcite.util.Optionality;
 
@@ -52,10 +55,24 @@ public class NullableSqlAvgAggFunction extends SqlAggFunction {
         name,
         null,
         kind,
-        ReturnTypes.AVG_AGG_FUNCTION.andThen(SqlTypeTransforms.FORCE_NULLABLE), // modified here
+        ReturnTypes.AVG_AGG_FUNCTION
+            .andThen(SqlTypeTransforms.FORCE_NULLABLE)
+            .andThen(
+                (binding, type) -> {
+                  // For temporal operands, return the original temporal type instead of DOUBLE.
+                  // AVG on DATE/TIMESTAMP computes average as epoch millis then converts back.
+                  RelDataType operandType = binding.getOperandType(0);
+                  SqlTypeName operandTypeName = operandType.getSqlTypeName();
+                  if (SqlTypeFamily.DATETIME.getTypeNames().contains(operandTypeName)) {
+                    return binding
+                        .getTypeFactory()
+                        .createTypeWithNullability(operandType, type.isNullable());
+                  }
+                  return type;
+                }),
         null,
-        OperandTypes.NUMERIC,
-        SqlFunctionCategory.NUMERIC,
+        OperandTypes.NUMERIC.or(OperandTypes.DATETIME),
+        SqlFunctionCategory.SYSTEM,
         false,
         false,
         Optionality.FORBIDDEN);
