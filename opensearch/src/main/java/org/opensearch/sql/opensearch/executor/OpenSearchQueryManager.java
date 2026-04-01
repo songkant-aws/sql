@@ -48,11 +48,20 @@ public class OpenSearchQueryManager implements QueryManager {
     cancellableTask.remove();
   }
 
+  /**
+   * Atomically retrieve and clear the cancellable task for the current thread. This prevents
+   * potential issues when concurrent PPL query submissions interleave on the same thread.
+   */
+  public static CancellableTask getAndClearCancellableTask() {
+    CancellableTask task = cancellableTask.get();
+    cancellableTask.remove();
+    return task;
+  }
+
   @Override
   public QueryId submit(AbstractPlan queryPlan) {
     TimeValue timeout = settings.getSettingValue(Settings.Key.PPL_QUERY_TIMEOUT);
-    CancellableTask cancelTask = cancellableTask.get();
-    cancellableTask.remove();
+    CancellableTask cancelTask = getAndClearCancellableTask();
     schedule(nodeClient, queryPlan::execute, timeout, cancelTask);
 
     return queryPlan.getQueryId();

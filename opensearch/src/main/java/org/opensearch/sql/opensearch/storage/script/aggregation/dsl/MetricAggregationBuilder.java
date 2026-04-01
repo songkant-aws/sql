@@ -189,6 +189,13 @@ public class MetricAggregationBuilder
     return Pair.of(aggregationBuilder, parser);
   }
 
+  /**
+   * Default precision threshold for cardinality aggregation. This caps the memory used by the
+   * HyperLogLog++ algorithm's internal data structures (reused_arrays) to prevent unbounded
+   * allocation on high-cardinality fields.
+   */
+  private static final long DEFAULT_CARDINALITY_PRECISION_THRESHOLD = 40000L;
+
   /** Make {@link CardinalityAggregationBuilder} for distinct count aggregations. */
   private Pair<AggregationBuilder, MetricParser> make(
       CardinalityAggregationBuilder builder,
@@ -198,6 +205,7 @@ public class MetricAggregationBuilder
       MetricParser parser) {
     CardinalityAggregationBuilder aggregationBuilder =
         helper.build(expression, builder::field, builder::script);
+    aggregationBuilder.precisionThreshold(DEFAULT_CARDINALITY_PRECISION_THRESHOLD);
     if (condition != null) {
       return Pair.of(
           makeFilterAggregation(aggregationBuilder, condition, name),

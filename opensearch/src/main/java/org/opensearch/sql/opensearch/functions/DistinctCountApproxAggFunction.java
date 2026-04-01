@@ -42,16 +42,34 @@ public class DistinctCountApproxAggFunction
   }
 
   public static class HLLAccumulator implements UserDefinedAggFunction.Accumulator {
+    /**
+     * Default maximum number of distinct values to track. Beyond this limit, new values are
+     * silently dropped to prevent unbounded memory allocation in the HLL++ data structures.
+     */
+    static final int DEFAULT_MAX_DISTINCT_VALUES = 40_000;
+
     private final HyperLogLogPlusPlus hll;
+    private final int maxDistinctValues;
+    private int distinctCount;
 
     public HLLAccumulator() {
+      this(DEFAULT_MAX_DISTINCT_VALUES);
+    }
+
+    public HLLAccumulator(int maxDistinctValues) {
       this.hll =
           new HyperLogLogPlusPlus(
               HyperLogLogPlusPlus.DEFAULT_PRECISION, BigArrays.NON_RECYCLING_INSTANCE, 1);
+      this.maxDistinctValues = maxDistinctValues;
+      this.distinctCount = 0;
     }
 
     public void add(Object value) {
+      if (distinctCount >= maxDistinctValues) {
+        return;
+      }
       hll.collect(0, hash(value));
+      distinctCount++;
     }
 
     @Override

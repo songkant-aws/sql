@@ -39,7 +39,7 @@ public class ResourceMonitorPlan extends PhysicalPlan implements SerializablePla
   @ToString.Exclude private final ResourceMonitor monitor;
 
   /** Count how many calls to delegate's next() already. */
-  @EqualsAndHashCode.Exclude private long nextCallCount = 0L;
+  @EqualsAndHashCode.Exclude private volatile long nextCallCount = 0L;
 
   /**
    * Helper method to get the default memory limit string from the Setting constant.
@@ -57,6 +57,7 @@ public class ResourceMonitorPlan extends PhysicalPlan implements SerializablePla
 
   @Override
   public void open() {
+    nextCallCount = 0L;
     ResourceStatus status = this.monitor.getStatus();
     if (!status.isHealthy()) {
       throw new IllegalStateException(
@@ -67,7 +68,16 @@ public class ResourceMonitorPlan extends PhysicalPlan implements SerializablePla
               Settings.Key.QUERY_MEMORY_LIMIT.getKeyValue(),
               getDefaultMemoryLimit()));
     }
-    delegate.open();
+    try {
+      delegate.open();
+    } catch (Exception e) {
+      try {
+        delegate.close();
+      } catch (Exception closeEx) {
+        e.addSuppressed(closeEx);
+      }
+      throw e;
+    }
   }
 
   @Override
@@ -87,7 +97,8 @@ public class ResourceMonitorPlan extends PhysicalPlan implements SerializablePla
 
   @Override
   public ExprValue next() {
-    boolean shouldCheck = (++nextCallCount % NUMBER_OF_NEXT_CALL_TO_CHECK == 0);
+    long count = ++nextCallCount;
+    boolean shouldCheck = (count % NUMBER_OF_NEXT_CALL_TO_CHECK == 0);
     if (shouldCheck) {
       ResourceStatus status = this.monitor.getStatus();
       if (!status.isHealthy()) {
@@ -97,7 +108,7 @@ public class ResourceMonitorPlan extends PhysicalPlan implements SerializablePla
                     + "Rows processed: %d. "
                     + "To increase the limit, adjust the '%s' setting (default: %s).",
                 status.getFormattedDescription(),
-                nextCallCount,
+                count,
                 Settings.Key.QUERY_MEMORY_LIMIT.getKeyValue(),
                 getDefaultMemoryLimit()));
       }

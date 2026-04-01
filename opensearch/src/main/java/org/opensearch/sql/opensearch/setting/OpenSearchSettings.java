@@ -343,6 +343,15 @@ public class OpenSearchSettings extends Settings {
           Setting.Property.NodeScope,
           Setting.Property.Dynamic);
 
+  public static final Setting<Integer> CARDINALITY_PRECISION_THRESHOLD_SETTING =
+      Setting.intSetting(
+          Key.CARDINALITY_PRECISION_THRESHOLD.getKeyValue(),
+          40000,
+          1,
+          40000,
+          Setting.Property.NodeScope,
+          Setting.Property.Dynamic);
+
   /** Construct OpenSearchSetting. The OpenSearchSetting must be singleton. */
   @SuppressWarnings("unchecked")
   public OpenSearchSettings(ClusterSettings clusterSettings) {
@@ -595,6 +604,12 @@ public class OpenSearchSettings extends Settings {
         Key.FIELD_TYPE_TOLERANCE,
         FIELD_TYPE_TOLERANCE_SETTING,
         new Updater(Key.FIELD_TYPE_TOLERANCE));
+    register(
+        settingBuilder,
+        clusterSettings,
+        Key.CARDINALITY_PRECISION_THRESHOLD,
+        CARDINALITY_PRECISION_THRESHOLD_SETTING,
+        new Updater(Key.CARDINALITY_PRECISION_THRESHOLD));
     defaultSettings = settingBuilder.build();
   }
 
@@ -687,6 +702,7 @@ public class OpenSearchSettings extends Settings {
         .add(SESSION_INACTIVITY_TIMEOUT_MILLIS_SETTING)
         .add(STREAMING_JOB_HOUSEKEEPER_INTERVAL_SETTING)
         .add(FIELD_TYPE_TOLERANCE_SETTING)
+        .add(CARDINALITY_PRECISION_THRESHOLD_SETTING)
         .build();
   }
 
