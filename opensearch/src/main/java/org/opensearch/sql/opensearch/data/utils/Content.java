@@ -53,6 +53,9 @@ public interface Content {
   /** Is array value. */
   boolean isArray();
 
+  /** Is object (map/struct) value. */
+  boolean isObject();
+
   /** Get integer value. */
   Integer intValue();
 

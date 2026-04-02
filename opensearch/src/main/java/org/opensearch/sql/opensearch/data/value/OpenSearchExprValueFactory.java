@@ -32,6 +32,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -251,6 +252,19 @@ public class OpenSearchExprValueFactory {
       return ExprBooleanValue.of(content.booleanValue());
     } else if (content.isNull()) {
       return ExprNullValue.of();
+    } else if (content.isObject()) {
+      // Handle inner objects (e.g. fields inside enabled:false parent objects)
+      // whose types are not in the mapping. Derive struct from runtime values.
+      LinkedHashMap<String, ExprValue> values = new LinkedHashMap<>();
+      content
+          .map()
+          .forEachRemaining(entry -> values.put(entry.getKey(), parseContent(entry.getValue())));
+      return new ExprTupleValue(values);
+    } else if (content.isArray()) {
+      // Handle inner arrays inside objects with no type mapping.
+      List<ExprValue> arrayValues = new ArrayList<>();
+      content.array().forEachRemaining(v -> arrayValues.add(parseContent(v)));
+      return new ExprCollectionValue(arrayValues);
     }
     // Default case, treat as a string value
     return new ExprStringValue(content.objectValue().toString());

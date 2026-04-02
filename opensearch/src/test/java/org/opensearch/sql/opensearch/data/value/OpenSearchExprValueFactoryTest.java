@@ -1177,6 +1177,93 @@ class OpenSearchExprValueFactoryTest {
     assertEquals(stringValue("value"), structValue.get("good"));
   }
 
+  // ==================== Enabled:false Object Tests ====================
+  // Tests for issues #4905 and #4906: inner JSON objects under enabled:false parent
+
+  /**
+   * When a parent object has enabled:false, sub-fields are not in the mapping. The factory should
+   * derive types from runtime values instead of returning undefined or null.
+   */
+  @Test
+  public void constructEnabledFalseObjectWithInnerStruct() {
+    // Mapping only has the parent as Object type, no sub-fields (enabled:false scenario)
+    Map<String, OpenSearchDataType> enabledFalseMapping =
+        ImmutableMap.of(
+            "disabledObj", OpenSearchDataType.of(OpenSearchDataType.MappingType.Object));
+    OpenSearchExprValueFactory factory = new OpenSearchExprValueFactory(enabledFalseMapping, true);
+
+    ExprValue result =
+        factory.construct("{\"disabledObj\":{\"inner\":{\"key\":\"value\"}}}", false);
+    Map<String, ExprValue> disabledObj = result.tupleValue().get("disabledObj").tupleValue();
+    // The inner object should be parsed as a struct, not null or string
+    ExprValue inner = disabledObj.get("inner");
+    assertEquals(STRUCT, inner.type());
+    assertEquals(stringValue("value"), inner.tupleValue().get("key"));
+  }
+
+  @Test
+  public void constructEnabledFalseObjectWithPrimitiveFields() {
+    Map<String, OpenSearchDataType> enabledFalseMapping =
+        ImmutableMap.of(
+            "disabledObj", OpenSearchDataType.of(OpenSearchDataType.MappingType.Object));
+    OpenSearchExprValueFactory factory = new OpenSearchExprValueFactory(enabledFalseMapping, true);
+
+    ExprValue result =
+        factory.construct(
+            "{\"disabledObj\":{\"name\":\"test\",\"count\":42,\"active\":true}}", false);
+    Map<String, ExprValue> obj = result.tupleValue().get("disabledObj").tupleValue();
+    assertEquals(stringValue("test"), obj.get("name"));
+    assertEquals(integerValue(42), obj.get("count"));
+    assertEquals(booleanValue(true), obj.get("active"));
+  }
+
+  @Test
+  public void constructEnabledFalseObjectWithNestedInnerObject() {
+    Map<String, OpenSearchDataType> enabledFalseMapping =
+        ImmutableMap.of(
+            "disabledObj", OpenSearchDataType.of(OpenSearchDataType.MappingType.Object));
+    OpenSearchExprValueFactory factory = new OpenSearchExprValueFactory(enabledFalseMapping, true);
+
+    ExprValue result =
+        factory.construct("{\"disabledObj\":{\"level1\":{\"level2\":{\"val\":123}}}}", false);
+    Map<String, ExprValue> obj = result.tupleValue().get("disabledObj").tupleValue();
+    ExprValue level1 = obj.get("level1");
+    assertEquals(STRUCT, level1.type());
+    ExprValue level2 = level1.tupleValue().get("level2");
+    assertEquals(STRUCT, level2.type());
+    assertEquals(integerValue(123), level2.tupleValue().get("val"));
+  }
+
+  @Test
+  public void constructEnabledFalseObjectWithInnerArray() {
+    Map<String, OpenSearchDataType> enabledFalseMapping =
+        ImmutableMap.of(
+            "disabledObj", OpenSearchDataType.of(OpenSearchDataType.MappingType.Object));
+    OpenSearchExprValueFactory factory = new OpenSearchExprValueFactory(enabledFalseMapping, true);
+
+    ExprValue result = factory.construct("{\"disabledObj\":{\"tags\":[\"a\",\"b\",\"c\"]}}", false);
+    Map<String, ExprValue> obj = result.tupleValue().get("disabledObj").tupleValue();
+    ExprValue tags = obj.get("tags");
+    assertEquals(ARRAY, tags.type());
+    assertEquals(
+        new ExprCollectionValue(List.of(stringValue("a"), stringValue("b"), stringValue("c"))),
+        tags);
+  }
+
+  @Test
+  public void constructEnabledFalseObjectWithNullField() {
+    Map<String, OpenSearchDataType> enabledFalseMapping =
+        ImmutableMap.of(
+            "disabledObj", OpenSearchDataType.of(OpenSearchDataType.MappingType.Object));
+    OpenSearchExprValueFactory factory = new OpenSearchExprValueFactory(enabledFalseMapping, true);
+
+    ExprValue result =
+        factory.construct("{\"disabledObj\":{\"nullField\":null,\"name\":\"ok\"}}", false);
+    Map<String, ExprValue> obj = result.tupleValue().get("disabledObj").tupleValue();
+    assertEquals(nullValue(), obj.get("nullField"));
+    assertEquals(stringValue("ok"), obj.get("name"));
+  }
+
   @EqualsAndHashCode(callSuper = false)
   @ToString
   private static class TestType extends OpenSearchDataType {
