@@ -23,6 +23,9 @@ public class JsonUtils {
   public static String convertToJsonPath(String input) {
     if (input == null || input.isEmpty()) return "$";
 
+    // If input already starts with '$', it is already a JSONPath expression
+    if (input.startsWith("$")) return input;
+
     StringBuilder sb = new StringBuilder("$.");
     int i = 0;
     while (i < input.length()) {
