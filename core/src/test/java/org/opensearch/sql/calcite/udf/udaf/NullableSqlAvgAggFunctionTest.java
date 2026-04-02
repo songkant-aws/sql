@@ -74,6 +74,61 @@ class NullableSqlAvgAggFunctionTest {
   }
 
   @Test
+  void testStddevPopDoesNotAcceptDatetime() {
+    NullableSqlAvgAggFunction fn = new NullableSqlAvgAggFunction(SqlKind.STDDEV_POP);
+    String allowedSignatures = fn.getOperandTypeChecker().getAllowedSignatures(fn, "STDDEV_POP");
+    assertNotNull(allowedSignatures);
+    assertTrue(
+        !allowedSignatures.contains("DATETIME"),
+        "STDDEV_POP should not accept datetime operands, got: " + allowedSignatures);
+  }
+
+  @Test
+  void testVarPopDoesNotAcceptDatetime() {
+    NullableSqlAvgAggFunction fn = new NullableSqlAvgAggFunction(SqlKind.VAR_POP);
+    String allowedSignatures = fn.getOperandTypeChecker().getAllowedSignatures(fn, "VAR_POP");
+    assertNotNull(allowedSignatures);
+    assertTrue(
+        !allowedSignatures.contains("DATETIME"),
+        "VAR_POP should not accept datetime operands, got: " + allowedSignatures);
+  }
+
+  @Test
+  void testStddevSampDoesNotAcceptDatetime() {
+    NullableSqlAvgAggFunction fn = new NullableSqlAvgAggFunction(SqlKind.STDDEV_SAMP);
+    String allowedSignatures = fn.getOperandTypeChecker().getAllowedSignatures(fn, "STDDEV_SAMP");
+    assertNotNull(allowedSignatures);
+    assertTrue(
+        !allowedSignatures.contains("DATETIME"),
+        "STDDEV_SAMP should not accept datetime operands, got: " + allowedSignatures);
+  }
+
+  @Test
+  void testVarSampDoesNotAcceptDatetime() {
+    NullableSqlAvgAggFunction fn = new NullableSqlAvgAggFunction(SqlKind.VAR_SAMP);
+    String allowedSignatures = fn.getOperandTypeChecker().getAllowedSignatures(fn, "VAR_SAMP");
+    assertNotNull(allowedSignatures);
+    assertTrue(
+        !allowedSignatures.contains("DATETIME"),
+        "VAR_SAMP should not accept datetime operands, got: " + allowedSignatures);
+  }
+
+  @Test
+  void testAvgAcceptsDatetimeButNonAvgDoesNot() {
+    // AVG should accept DATETIME
+    NullableSqlAvgAggFunction avg = new NullableSqlAvgAggFunction(SqlKind.AVG);
+    String avgSig = avg.getOperandTypeChecker().getAllowedSignatures(avg, "AVG");
+    assertTrue(avgSig.contains("DATETIME"), "AVG should accept datetime operands, got: " + avgSig);
+
+    // STDDEV_POP should NOT accept DATETIME
+    NullableSqlAvgAggFunction stddev = new NullableSqlAvgAggFunction(SqlKind.STDDEV_POP);
+    String stddevSig = stddev.getOperandTypeChecker().getAllowedSignatures(stddev, "STDDEV_POP");
+    assertTrue(
+        !stddevSig.contains("DATETIME"),
+        "STDDEV_POP should not accept datetime operands, got: " + stddevSig);
+  }
+
+  @Test
   void testAllAvgKindsSupported() {
     // Verify all AVG-family SqlKinds can be created
     List<SqlKind> avgKinds =

@@ -55,23 +55,27 @@ public class NullableSqlAvgAggFunction extends SqlAggFunction {
         name,
         null,
         kind,
-        ReturnTypes.AVG_AGG_FUNCTION
-            .andThen(SqlTypeTransforms.FORCE_NULLABLE)
-            .andThen(
-                (binding, type) -> {
-                  // For temporal operands, return the original temporal type instead of DOUBLE.
-                  // AVG on DATE/TIMESTAMP computes average as epoch millis then converts back.
-                  RelDataType operandType = binding.getOperandType(0);
-                  SqlTypeName operandTypeName = operandType.getSqlTypeName();
-                  if (SqlTypeFamily.DATETIME.getTypeNames().contains(operandTypeName)) {
-                    return binding
-                        .getTypeFactory()
-                        .createTypeWithNullability(operandType, type.isNullable());
-                  }
-                  return type;
-                }),
+        kind == SqlKind.AVG
+            ? ReturnTypes.AVG_AGG_FUNCTION
+                .andThen(SqlTypeTransforms.FORCE_NULLABLE)
+                .andThen(
+                    (binding, type) -> {
+                      // For temporal operands, return the original temporal type instead of
+                      // DOUBLE.
+                      // AVG on DATE/TIMESTAMP computes average as epoch millis then converts
+                      // back.
+                      RelDataType operandType = binding.getOperandType(0);
+                      SqlTypeName operandTypeName = operandType.getSqlTypeName();
+                      if (SqlTypeFamily.DATETIME.getTypeNames().contains(operandTypeName)) {
+                        return binding
+                            .getTypeFactory()
+                            .createTypeWithNullability(operandType, type.isNullable());
+                      }
+                      return type;
+                    })
+            : ReturnTypes.AVG_AGG_FUNCTION.andThen(SqlTypeTransforms.FORCE_NULLABLE),
         null,
-        OperandTypes.NUMERIC.or(OperandTypes.DATETIME),
+        kind == SqlKind.AVG ? OperandTypes.NUMERIC.or(OperandTypes.DATETIME) : OperandTypes.NUMERIC,
         SqlFunctionCategory.SYSTEM,
         false,
         false,
