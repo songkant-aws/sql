@@ -320,8 +320,7 @@ fromClause
    ;
 
 tableOrSubqueryClause
-   : LT_SQR_PRTHS subSearch RT_SQR_PRTHS (AS alias = qualifiedName)?
-   | tableSourceClause
+   : tableSourceClause
    ;
 
 // One tableSourceClause will generate one Relation node with/without one alias
