@@ -298,6 +298,50 @@ public class CalcitePPLChartTest extends CalcitePPLAbstractTest {
     verifyPPLToSparkSQL(root, expectedSparkSql);
   }
 
+  @Test
+  public void testChartWithBinAndNullValues() {
+    // bin produces null values when input is null; chart sort must handle nulls gracefully
+    String ppl = "source=bank | chart avg(balance) by age span=10";
+
+    RelNode root = getRelNode(ppl);
+    String expectedSparkSql =
+        "SELECT SPAN(`age`, 10, NULL) `age`, AVG(`balance`) `avg(balance)`\n"
+            + "FROM `scott`.`bank`\n"
+            + "WHERE `age` IS NOT NULL AND `balance` IS NOT NULL\n"
+            + "GROUP BY SPAN(`age`, 10, NULL)\n"
+            + "ORDER BY 1 NULLS LAST";
+    verifyPPLToSparkSQL(root, expectedSparkSql);
+  }
+
+  @Test
+  public void testChartWithBinAndNullValuesUseNullTrue() {
+    // When usenull=true, null values from bin are included; sort must use NULLS LAST
+    String ppl = "source=bank | chart usenull=true avg(balance) over age span=10 by gender";
+
+    RelNode root = getRelNode(ppl);
+    String expectedSparkSql =
+        "SELECT `t2`.`age`, CASE WHEN `t2`.`gender` IS NULL THEN 'NULL' WHEN"
+            + " `t9`.`_row_number_chart_` <= 10 THEN `t2`.`gender` ELSE 'OTHER' END `gender`,"
+            + " AVG(`t2`.`avg(balance)`) `avg(balance)`\n"
+            + "FROM (SELECT SPAN(`age`, 10, NULL) `age`, `gender`, AVG(`balance`)"
+            + " `avg(balance)`\n"
+            + "FROM `scott`.`bank`\n"
+            + "WHERE `age` IS NOT NULL AND `balance` IS NOT NULL\n"
+            + "GROUP BY `gender`, SPAN(`age`, 10, NULL)) `t2`\n"
+            + "LEFT JOIN (SELECT `gender`, SUM(`avg(balance)`) `__grand_total__`, ROW_NUMBER() OVER"
+            + " (ORDER BY SUM(`avg(balance)`) DESC) `_row_number_chart_`\n"
+            + "FROM (SELECT `gender`, AVG(`balance`) `avg(balance)`\n"
+            + "FROM `scott`.`bank`\n"
+            + "WHERE `age` IS NOT NULL AND `balance` IS NOT NULL\n"
+            + "GROUP BY `gender`, SPAN(`age`, 10, NULL)) `t6`\n"
+            + "WHERE `gender` IS NOT NULL\n"
+            + "GROUP BY `gender`) `t9` ON `t2`.`gender` = `t9`.`gender`\n"
+            + "GROUP BY `t2`.`age`, CASE WHEN `t2`.`gender` IS NULL THEN 'NULL' WHEN"
+            + " `t9`.`_row_number_chart_` <= 10 THEN `t2`.`gender` ELSE 'OTHER' END\n"
+            + "ORDER BY `t2`.`age` NULLS LAST, 2 NULLS LAST";
+    verifyPPLToSparkSQL(root, expectedSparkSql);
+  }
+
   private UnresolvedPlan parsePPL(String query) {
     PPLSyntaxParser parser = new PPLSyntaxParser();
     AstBuilder astBuilder = new AstBuilder(query);
