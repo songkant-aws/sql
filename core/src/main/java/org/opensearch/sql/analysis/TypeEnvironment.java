@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import lombok.Getter;
+import lombok.Setter;
 import org.opensearch.sql.analysis.symbol.Namespace;
 import org.opensearch.sql.analysis.symbol.Symbol;
 import org.opensearch.sql.analysis.symbol.SymbolTable;
@@ -24,6 +25,7 @@ import org.opensearch.sql.expression.env.Environment;
 public class TypeEnvironment implements Environment<Symbol, ExprType> {
   @Getter private final TypeEnvironment parent;
   private final SymbolTable symbolTable;
+  @Getter @Setter private boolean restricted = false;
 
   /**
    * Constructor with empty symbol tables.
@@ -58,6 +60,9 @@ public class TypeEnvironment implements Environment<Symbol, ExprType> {
       Optional<ExprType> typeOptional = cur.symbolTable.lookup(symbol);
       if (typeOptional.isPresent()) {
         return typeOptional.get();
+      }
+      if (cur.restricted) {
+        break;
       }
     }
     throw new SemanticCheckException(String.format("can't resolve %s in type env", symbol));

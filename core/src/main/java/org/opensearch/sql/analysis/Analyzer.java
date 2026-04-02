@@ -427,6 +427,7 @@ public class Analyzer extends AbstractNodeVisitor<LogicalPlan, AnalysisContext> 
     namedExpressions.forEach(
         expr ->
             newEnv.define(new Symbol(Namespace.FIELD_NAME, expr.getNameOrAlias()), expr.type()));
+    newEnv.setRestricted(true);
 
     return new LogicalProject(child, namedExpressions, context.getNamedParseExpressions());
   }

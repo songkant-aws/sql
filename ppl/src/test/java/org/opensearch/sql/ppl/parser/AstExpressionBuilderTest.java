@@ -1045,6 +1045,24 @@ public class AstExpressionBuilderTest extends AstBuilderTest {
   }
 
   @Test
+  public void testScientificNotationLiteral() {
+    assertEqual(
+        "source=t | eval x = 9e1", eval(relation("t"), let(field("x"), doubleLiteral(90.0))));
+  }
+
+  @Test
+  public void testScientificNotationWithDecimal() {
+    assertEqual(
+        "source=t | eval x = 1.5e2", eval(relation("t"), let(field("x"), doubleLiteral(150.0))));
+  }
+
+  @Test
+  public void testScientificNotationNegativeExponent() {
+    assertEqual(
+        "source=t | eval x = 3.14e-2", eval(relation("t"), let(field("x"), doubleLiteral(0.0314))));
+  }
+
+  @Test
   public void testBooleanLiteralExpr() {
     assertEqual("source=t a=true", search(relation("t"), "a:true"));
     assertEqual(

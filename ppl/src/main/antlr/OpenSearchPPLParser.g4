@@ -885,6 +885,7 @@ perFunction
 numericLiteral
     : integerLiteral
     | decimalLiteral
+    | realLiteral
     | doubleLiteral
     | floatLiteral
     ;
@@ -1473,6 +1474,7 @@ literalValue
    | stringLiteral
    | integerLiteral
    | decimalLiteral
+   | realLiteral
    | doubleLiteral
    | floatLiteral
    | booleanLiteral
@@ -1494,6 +1496,10 @@ integerLiteral
 
 decimalLiteral
    : (PLUS | MINUS)? DECIMAL_LITERAL
+   ;
+
+realLiteral
+   : (PLUS | MINUS)? REAL_LITERAL
    ;
 
 doubleLiteral

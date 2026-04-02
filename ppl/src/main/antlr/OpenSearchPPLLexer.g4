@@ -577,6 +577,10 @@ fragment SPANUNIT:                  COMMON_TIME_UNIT | PLURAL_UNIT
 SPANLENGTH:                         DEC_DIGIT+ (SPANUNIT | DAY_OR_DOUBLE);
 DECIMAL_SPANLENGTH:                 (DEC_DIGIT+)? '.' DEC_DIGIT+  SPANUNIT;
 
+REAL_LITERAL:                       (DEC_DIGIT+)? '.' DEC_DIGIT+ EXPONENT_NUM_PART
+                                    | DEC_DIGIT+ '.' EXPONENT_NUM_PART
+                                    | (DEC_DIGIT+)? '.' (DEC_DIGIT+ EXPONENT_NUM_PART)
+                                    | DEC_DIGIT+ EXPONENT_NUM_PART;
 NUMERIC_ID : DEC_DIGIT+ ID_LITERAL;
 
 // LITERALS AND VALUES
@@ -598,6 +602,7 @@ DQUOTA_STRING:                      '"' ( '\\'. | '""' | ~('"'| '\\') )* '"';
 SQUOTA_STRING:                      '\'' ('\\'. | '\'\'' | ~('\'' | '\\'))* '\'';
 BQUOTA_STRING:                      '`' ( '\\'. | '``' | ~('`'|'\\'))* '`';
 fragment DEC_DIGIT:                 [0-9];
+fragment EXPONENT_NUM_PART:         [eE] [-+]? DEC_DIGIT+;
 
 // Identifiers cannot start with a single '_' since this an OpenSearch reserved
 // metadata field.  Two underscores (or more) is acceptable, such as '__field'.

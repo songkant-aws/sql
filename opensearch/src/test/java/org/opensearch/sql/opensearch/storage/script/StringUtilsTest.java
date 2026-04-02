@@ -28,6 +28,36 @@ public class StringUtilsTest {
   }
 
   @Test
+  public void testEscapedPercentInLike() {
+    // \% should be treated as literal % character
+    assertEquals("%", StringUtils.convertSqlWildcardToLuceneSafe("\\%"));
+  }
+
+  @Test
+  public void testEscapedUnderscoreInLike() {
+    // \_ should be treated as literal _ character
+    assertEquals("_", StringUtils.convertSqlWildcardToLuceneSafe("\\_"));
+  }
+
+  @Test
+  public void testMixedEscapeAndWildcard() {
+    // testEscape\% should match literal 'testEscape%'
+    assertEquals("testEscape%", StringUtils.convertSqlWildcardToLuceneSafe("testEscape\\%"));
+  }
+
+  @Test
+  public void testBackslashBeforeNonSpecialChar() {
+    // Backslash before non-special char should be preserved
+    assertEquals("test\\n", StringUtils.convertSqlWildcardToLuceneSafe("test\\n"));
+  }
+
+  @Test
+  public void testLiteralStarAndQuestionEscaped() {
+    // Literal * and ? should be escaped in safe mode
+    assertEquals("test\\*\\?", StringUtils.convertSqlWildcardToLuceneSafe("test*?"));
+  }
+
+  @Test
   public void test_escape_sql_wildcards_safe() {
     assertEquals("%", StringUtils.convertSqlWildcardToLuceneSafe("\\%"));
     assertEquals("\\*", StringUtils.convertSqlWildcardToLuceneSafe("\\*"));

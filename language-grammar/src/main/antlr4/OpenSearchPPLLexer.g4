@@ -499,6 +499,10 @@ Y:                                  'Y';
 //STRING_LITERAL:                     DQUOTA_STRING | SQUOTA_STRING | BQUOTA_STRING;
 ID:                                 ID_LITERAL;
 CLUSTER:                            CLUSTER_PREFIX_LITERAL;
+REAL_LITERAL:                       (DEC_DIGIT+)? '.' DEC_DIGIT+ EXPONENT_NUM_PART
+                                    | DEC_DIGIT+ '.' EXPONENT_NUM_PART
+                                    | (DEC_DIGIT+)? '.' (DEC_DIGIT+ EXPONENT_NUM_PART)
+                                    | DEC_DIGIT+ EXPONENT_NUM_PART;
 INTEGER_LITERAL:                    DEC_DIGIT+;
 DECIMAL_LITERAL:                    (DEC_DIGIT+)? '.' DEC_DIGIT+;
 
@@ -510,6 +514,7 @@ DQUOTA_STRING:                      '"' ( '\\'. | '""' | ~('"'| '\\') )* '"';
 SQUOTA_STRING:                      '\'' ('\\'. | '\'\'' | ~('\'' | '\\'))* '\'';
 BQUOTA_STRING:                      '`' ( '\\'. | '``' | ~('`'|'\\'))* '`';
 fragment DEC_DIGIT:                 [0-9];
+fragment EXPONENT_NUM_PART:         [eE] [-+]? DEC_DIGIT+;
 
 LINE_COMMENT:                       '//' ('\\\n' | ~[\r\n])* '\r'? '\n'? -> channel(HIDDEN);
 BLOCK_COMMENT:                      '/*' .*? '*/' -> channel(HIDDEN);

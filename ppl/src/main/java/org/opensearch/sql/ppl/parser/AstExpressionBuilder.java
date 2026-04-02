@@ -801,6 +801,11 @@ public class AstExpressionBuilder extends OpenSearchPPLParserBaseVisitor<Unresol
   }
 
   @Override
+  public UnresolvedExpression visitRealLiteral(OpenSearchPPLParser.RealLiteralContext ctx) {
+    return new Literal(Double.valueOf(ctx.getText()), DataType.DOUBLE);
+  }
+
+  @Override
   public UnresolvedExpression visitFloatLiteral(FloatLiteralContext ctx) {
     return new Literal(Float.valueOf(ctx.getText()), DataType.FLOAT);
   }

@@ -186,6 +186,15 @@ public class ExprValueCompareTest extends ExpressionTestBase {
   }
 
   @Test
+  public void testLongEqualsInteger() {
+    // Regression test for https://github.com/opensearch-project/sql/issues/226
+    ExprValue longVal = new ExprLongValue(12345);
+    ExprValue intVal = new ExprIntegerValue(12345);
+    assertEquals(0, longVal.compareTo(intVal));
+    assertEquals(0, intVal.compareTo(longVal));
+  }
+
+  @Test
   public void stringValueCompare() {
     assertEquals(0, new ExprStringValue("str1").compareTo(new ExprStringValue("str1")));
     assertEquals(1, new ExprStringValue("str2").compareTo(new ExprStringValue("str1")));

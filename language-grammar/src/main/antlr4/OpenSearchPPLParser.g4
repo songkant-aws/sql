@@ -966,6 +966,7 @@ literalValue
    : stringLiteral
    | integerLiteral
    | decimalLiteral
+   | realLiteral
    | booleanLiteral
    | datetimeLiteral //#datetime
    | intervalLiteral
@@ -986,6 +987,10 @@ integerLiteral
 
 decimalLiteral
    : (PLUS | MINUS)? DECIMAL_LITERAL
+   ;
+
+realLiteral
+   : (PLUS | MINUS)? REAL_LITERAL
    ;
 
 booleanLiteral
