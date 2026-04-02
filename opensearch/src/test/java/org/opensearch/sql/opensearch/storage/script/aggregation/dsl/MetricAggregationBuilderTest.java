@@ -5,8 +5,11 @@
 
 package org.opensearch.sql.opensearch.storage.script.aggregation.dsl;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.opensearch.sql.common.utils.StringUtils.format;
 import static org.opensearch.sql.data.type.ExprCoreType.ARRAY;
@@ -35,6 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.opensearch.sql.expression.DSL;
+import org.opensearch.sql.expression.FunctionExpression;
 import org.opensearch.sql.expression.aggregation.AvgAggregator;
 import org.opensearch.sql.expression.aggregation.CountAggregator;
 import org.opensearch.sql.expression.aggregation.MaxAggregator;
@@ -101,8 +105,11 @@ class MetricAggregationBuilderTest {
         format(
             "{%n"
                 + "  \"count(age)\" : {%n"
-                + "    \"value_count\" : {%n"
-                + "      \"field\" : \"age\"%n"
+                + "    \"filter\" : {%n"
+                + "      \"exists\" : {%n"
+                + "        \"field\" : \"age\",%n"
+                + "        \"boost\" : 1.0%n"
+                + "      }%n"
                 + "    }%n"
                 + "  }%n"
                 + "}"),
@@ -143,6 +150,20 @@ class MetricAggregationBuilderTest {
         buildQuery(
             Arrays.asList(
                 named("count(1)", new CountAggregator(Arrays.asList(literal(1)), INTEGER)))));
+  }
+
+  @Test
+  void should_build_count_with_non_reference_expression() {
+    // COUNT(expr) where expr is not a ReferenceExpression should fall back to value_count
+    // and must not throw ClassCastException
+    FunctionExpression funcExpr = mock(FunctionExpression.class);
+    when(serializer.serialize(any())).thenReturn("mock_script");
+
+    assertDoesNotThrow(
+        () ->
+            buildQuery(
+                Arrays.asList(
+                    named("count(a + b)", new CountAggregator(Arrays.asList(funcExpr), INTEGER)))));
   }
 
   @Test

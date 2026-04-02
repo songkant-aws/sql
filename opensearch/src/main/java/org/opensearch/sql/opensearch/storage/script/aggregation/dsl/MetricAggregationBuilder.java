@@ -246,10 +246,12 @@ public class MetricAggregationBuilder
 
   /**
    * Build COUNT aggregation. For COUNT(*) or COUNT(literal), use value_count on _index metadata
-   * field which counts all documents. For COUNT(field), use a filter aggregation with an exists
-   * query so that each document is counted at most once, regardless of whether the field contains a
-   * scalar or an array (multi-valued field). This fixes incorrect counting where value_count would
-   * count each array element separately.
+   * field which counts all documents. For COUNT(field) where field is a simple reference, use a
+   * filter aggregation with an exists query so that each document is counted at most once,
+   * regardless of whether the field contains a scalar or an array (multi-valued field). This fixes
+   * incorrect counting where value_count would count each array element separately. For
+   * non-ReferenceExpression arguments (e.g. COUNT(a + b)), fall back to value_count which delegates
+   * to the script engine.
    */
   private Pair<AggregationBuilder, MetricParser> makeCount(
       Expression expression, Expression condition, String name) {
@@ -262,19 +264,24 @@ public class MetricAggregationBuilder
           name,
           new SingleValueParser(name));
     }
-    // COUNT(field): use filter + exists query to count documents, not array elements
-    String fieldName = ((ReferenceExpression) expression).getAttr();
-    FilterAggregationBuilder filterAgg =
-        AggregationBuilders.filter(name, QueryBuilders.existsQuery(fieldName));
-    if (condition != null) {
-      filterAgg =
-          AggregationBuilders.filter(
-              name,
-              QueryBuilders.boolQuery()
-                  .must(QueryBuilders.existsQuery(fieldName))
-                  .must(filterBuilder.build(condition)));
+    if (expression instanceof ReferenceExpression) {
+      // COUNT(field): use filter + exists query to count documents, not array elements
+      String fieldName = ((ReferenceExpression) expression).getAttr();
+      FilterAggregationBuilder filterAgg =
+          AggregationBuilders.filter(name, QueryBuilders.existsQuery(fieldName));
+      if (condition != null) {
+        filterAgg =
+            AggregationBuilders.filter(
+                name,
+                QueryBuilders.boolQuery()
+                    .must(QueryBuilders.existsQuery(fieldName))
+                    .must(filterBuilder.build(condition)));
+      }
+      return Pair.of(filterAgg, new DocCountParser(name));
     }
-    return Pair.of(filterAgg, new DocCountParser(name));
+    // Non-reference expression (e.g. function call): fall back to value_count
+    return make(
+        AggregationBuilders.count(name), expression, condition, name, new SingleValueParser(name));
   }
 
   /**
