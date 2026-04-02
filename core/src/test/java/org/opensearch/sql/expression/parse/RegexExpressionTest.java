@@ -79,6 +79,42 @@ class RegexExpressionTest extends ExpressionTestBase {
   }
 
   @Test
+  public void resolve_multiline_field_values() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(stringValue("first line content\nsecond line content\nthird line content"));
+
+    assertEquals(
+        stringValue("first line content\nsecond line content\nthird line content"),
+        DSL.regex(DSL.ref("log_value", STRING), DSL.literal("(?<all>.*)"), DSL.literal("all"))
+            .valueOf(env));
+  }
+
+  @Test
+  public void resolve_multiline_with_named_groups() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(stringValue("header: value1\nbody: line1\nline2\nfooter: end"));
+
+    assertEquals(
+        stringValue("value1"),
+        DSL.regex(
+                DSL.ref("log_value", STRING),
+                DSL.literal("header: (?<header>\\S+)\\n(?<body>.*)\\nfooter: (?<footer>.+)"),
+                DSL.literal("header"))
+            .valueOf(env));
+
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(stringValue("header: value1\nbody: line1\nline2\nfooter: end"));
+
+    assertEquals(
+        stringValue("body: line1\nline2"),
+        DSL.regex(
+                DSL.ref("log_value", STRING),
+                DSL.literal("header: (?<header>\\S+)\\n(?<body>.*)\\nfooter: (?<footer>.+)"),
+                DSL.literal("body"))
+            .valueOf(env));
+  }
+
+  @Test
   public void resolve_not_parsable_inputs_as_empty_string() {
     assertEquals(
         stringValue(""),

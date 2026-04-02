@@ -86,6 +86,20 @@ class GrokExpressionTest extends ExpressionTestBase {
   }
 
   @Test
+  public void resolve_multiline_field_values() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(stringValue("first line\nsecond line\nthird line"));
+
+    assertEquals(
+        stringValue("first line\nsecond line\nthird line"),
+        DSL.grok(
+                DSL.ref("log_value", STRING),
+                DSL.literal("%{GREEDYDATA:message}"),
+                DSL.literal("message"))
+            .valueOf(env));
+  }
+
+  @Test
   public void resolve_null_and_empty_values() {
     assertEquals(
         stringValue(""),

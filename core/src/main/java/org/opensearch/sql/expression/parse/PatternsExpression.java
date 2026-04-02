@@ -45,7 +45,7 @@ public class PatternsExpression extends ParseExpression {
     String patternStr = pattern.valueOf().stringValue();
     useCustomPattern = !patternStr.isEmpty();
     if (useCustomPattern) {
-      this.pattern = Pattern.compile(patternStr);
+      this.pattern = Pattern.compile(patternStr, Pattern.DOTALL);
     }
   }
 

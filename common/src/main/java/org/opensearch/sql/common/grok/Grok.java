@@ -59,7 +59,7 @@ public class Grok implements Serializable {
       ZoneId defaultTimeZone) {
     this.originalGrokPattern = pattern;
     this.namedRegex = namedRegex;
-    this.compiledNamedRegex = Pattern.compile(namedRegex);
+    this.compiledNamedRegex = Pattern.compile(namedRegex, Pattern.DOTALL);
     this.namedRegexCollection = namedRegexCollection;
     this.namedGroups = GrokUtils.getNameGroups(namedRegex);
     this.groupTypes = Converter.getGroupTypes(namedRegexCollection.values());

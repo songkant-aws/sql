@@ -46,7 +46,7 @@ public class RegexCommonUtils {
   public static Pattern getCompiledPattern(String regex) {
     Pattern pattern = patternCache.get(regex);
     if (pattern == null) {
-      pattern = Pattern.compile(regex);
+      pattern = Pattern.compile(regex, Pattern.DOTALL);
       patternCache.put(regex, pattern);
     }
     return pattern;

@@ -56,6 +56,22 @@ class PatternsExpressionTest extends ExpressionTestBase {
   }
 
   @Test
+  public void resolve_multiline_field_values() {
+    when(DSL.ref("log_value", STRING).valueOf(env))
+        .thenReturn(stringValue("abc 123\ndef 456\nghi 789"));
+    // Default patterns mode: strip alphanumeric, keep punctuation and whitespace
+    assertEquals(
+        stringValue(" \n \n "),
+        DSL.patterns(DSL.ref("log_value", STRING), DSL.literal(""), DSL.literal("punct_field"))
+            .valueOf(env));
+    // Custom regex mode with multiline: strip digits across lines
+    assertEquals(
+        stringValue("abc \ndef \nghi "),
+        DSL.patterns(DSL.ref("log_value", STRING), DSL.literal("[0-9]"), DSL.literal("regex_field"))
+            .valueOf(env));
+  }
+
+  @Test
   public void resolve_null_and_missing_values() {
     assertEquals(
         LITERAL_NULL,
