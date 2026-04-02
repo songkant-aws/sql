@@ -920,10 +920,12 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
             .rowsTo(RexWindowBounds.CURRENT_ROW)
             .as(PlanUtils.ROW_NUMBER_COLUMN_FOR_TRANSPOSE));
 
-    // Step 2: UNPIVOT
+    // Step 2: UNPIVOT — use an internal column name for the value column to avoid collision
+    // with user fields named "value" (see https://github.com/opensearch-project/sql/issues/5172)
+    String unpivotValueCol = PlanUtils.UNPIVOT_VALUE_COLUMN_FOR_TRANSPOSE;
     b.unpivot(
         false,
-        ImmutableList.of("value"),
+        ImmutableList.of(unpivotValueCol),
         ImmutableList.of(columnName),
         fieldNames.stream()
             .map(
@@ -945,7 +947,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     // Step 4: PIVOT
     b.pivot(
         b.groupKey(trimmedColumnName),
-        ImmutableList.of(b.max(b.field("value"))),
+        ImmutableList.of(b.max(b.field(unpivotValueCol))),
         ImmutableList.of(b.field(PlanUtils.ROW_NUMBER_COLUMN_FOR_TRANSPOSE)),
         IntStream.rangeClosed(1, maxRows)
             .mapToObj(i -> Map.entry("row " + i, ImmutableList.of((RexNode) b.literal(i))))

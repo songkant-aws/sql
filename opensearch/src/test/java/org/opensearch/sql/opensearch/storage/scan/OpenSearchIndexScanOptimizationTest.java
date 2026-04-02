@@ -728,6 +728,38 @@ class OpenSearchIndexScanOptimizationTest {
             DSL.named("AVG(intV)", DSL.ref("AVG(intV)", DOUBLE))));
   }
 
+  /**
+   * When parse expressions reference a source field, that source field must also be pushed down to
+   * OpenSearch even if it is not in the user's field list. Otherwise parsed fields will be missing.
+   * See https://github.com/opensearch-project/sql/issues/3265
+   */
+  @Test
+  void test_project_push_down_includes_parse_source_field() {
+    ReferenceExpression sourceFieldRef = DSL.ref("line.message", STRING);
+    ReferenceExpression timestampRef = DSL.ref("timestamp", STRING);
+
+    // Build a RegexExpression whose sourceField is "line.message"
+    var parseExpr =
+        new org.opensearch.sql.expression.parse.RegexExpression(
+            sourceFieldRef, DSL.literal("Request from (?<service>.+)"), DSL.literal("service"));
+
+    NamedExpression namedParseExpr = DSL.named("service", parseExpr);
+
+    // Project list only has "timestamp" and "service" (not "line.message").
+    // The push-down should include "timestamp" (from the project list) and
+    // "line.message" (the parse expression's source field), but NOT "service"
+    // since it's a computed (parse) expression, not a reference to a real field.
+    assertEqualsAfterOptimization(
+        project(
+            indexScanBuilder(withProjectPushedDown(timestampRef, sourceFieldRef)),
+            List.of(DSL.named("timestamp", timestampRef), DSL.named("service", parseExpr)),
+            List.of(namedParseExpr)),
+        project(
+            relation("schema", table),
+            List.of(DSL.named("timestamp", timestampRef), DSL.named("service", parseExpr)),
+            List.of(namedParseExpr)));
+  }
+
   @Test
   void project_literal_should_not_be_pushed_down() {
     assertEqualsAfterOptimization(

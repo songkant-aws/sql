@@ -814,6 +814,26 @@ class AstExpressionBuilderTest {
         buildExprAst("age in (abs(20), abs(30))"));
   }
 
+  @Test
+  public void backtickQuotedNestedFieldSplitsOnDot() {
+    // Backtick-quoted identifier with dots should produce a multi-part QualifiedName
+    // so nested field paths are resolved correctly.
+    // See https://github.com/opensearch-project/sql/issues/2529
+    assertEquals(qualifiedName("products", "quantity"), buildExprAst("`products.quantity`"));
+  }
+
+  @Test
+  public void backtickQuotedNestedFieldMatchesUnquoted() {
+    // Quoted and unquoted nested fields should produce the same QualifiedName
+    assertEquals(buildExprAst("products.quantity"), buildExprAst("`products.quantity`"));
+  }
+
+  @Test
+  public void backtickQuotedSimpleFieldUnchanged() {
+    // Simple field name without dots should remain single-part
+    assertEquals(qualifiedName("quantity"), buildExprAst("`quantity`"));
+  }
+
   private Node buildExprAst(String expr) {
     OpenSearchSQLLexer lexer = new OpenSearchSQLLexer(new CaseInsensitiveCharStream(expr));
     OpenSearchSQLParser parser = new OpenSearchSQLParser(new CommonTokenStream(lexer));

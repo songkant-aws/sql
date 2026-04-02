@@ -76,6 +76,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.antlr.v4.runtime.RuleContext;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
@@ -100,7 +101,9 @@ public class AstExpressionBuilder extends OpenSearchSQLParserBaseVisitor<Unresol
 
   @Override
   public UnresolvedExpression visitTableName(TableNameContext ctx) {
-    return visit(ctx.qualifiedName());
+    // Table/index names should NOT expand dots in backtick-quoted identifiers,
+    // since index names like `logs.2020.01` are single logical names.
+    return visitIdentifiers(ctx.qualifiedName().ident());
   }
 
   @Override
@@ -115,7 +118,10 @@ public class AstExpressionBuilder extends OpenSearchSQLParserBaseVisitor<Unresol
 
   @Override
   public UnresolvedExpression visitQualifiedName(QualifiedNameContext ctx) {
-    return visitIdentifiers(ctx.ident());
+    // Expand dots in backtick-quoted identifiers for column/field references so that
+    // `products.quantity` is treated the same as products.quantity (nested path).
+    // See https://github.com/opensearch-project/sql/issues/2529
+    return visitIdentifiersWithDotExpansion(ctx.ident());
   }
 
   @Override
@@ -495,6 +501,26 @@ public class AstExpressionBuilder extends OpenSearchSQLParserBaseVisitor<Unresol
         identifiers.stream()
             .map(RuleContext::getText)
             .map(StringUtils::unquoteIdentifier)
+            .collect(Collectors.toList()));
+  }
+
+  /**
+   * Build a QualifiedName from identifiers, splitting backtick-quoted identifiers on dots. This
+   * ensures that backtick-quoted nested field paths like `products.quantity` are resolved the same
+   * as unquoted paths products.quantity. See https://github.com/opensearch-project/sql/issues/2529
+   */
+  private QualifiedName visitIdentifiersWithDotExpansion(List<IdentContext> identifiers) {
+    return new QualifiedName(
+        identifiers.stream()
+            .map(RuleContext::getText)
+            .flatMap(
+                text -> {
+                  String unquoted = StringUtils.unquoteIdentifier(text);
+                  if (!text.equals(unquoted) && unquoted.contains(".")) {
+                    return Arrays.stream(unquoted.split("\\."));
+                  }
+                  return Stream.of(unquoted);
+                })
             .collect(Collectors.toList()));
   }
 

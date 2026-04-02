@@ -24,6 +24,7 @@ import org.opensearch.sql.expression.FunctionExpression;
 import org.opensearch.sql.expression.NamedExpression;
 import org.opensearch.sql.expression.ReferenceExpression;
 import org.opensearch.sql.expression.function.OpenSearchFunctions;
+import org.opensearch.sql.expression.parse.ParseExpression;
 import org.opensearch.sql.opensearch.request.OpenSearchRequestBuilder;
 import org.opensearch.sql.opensearch.request.OpenSearchRequestBuilder.PushDownUnSupportedException;
 import org.opensearch.sql.opensearch.storage.script.filter.FilterQueryBuilder;
@@ -110,7 +111,22 @@ class OpenSearchIndexScanQueryBuilder implements PushDownQueryBuilder {
 
   @Override
   public boolean pushDownProject(LogicalProject project) {
-    requestBuilder.pushDownProjects(findReferenceExpressions(project.getProjectList()));
+    Set<ReferenceExpression> refs = findReferenceExpressions(project.getProjectList());
+
+    // Include source fields referenced by parse expressions so the raw data is fetched
+    // from OpenSearch even when the source field isn't in the user's field list.
+    // See https://github.com/opensearch-project/sql/issues/3265
+    for (NamedExpression parseExpr : project.getNamedParseExpressions()) {
+      Expression delegated = parseExpr.getDelegated();
+      if (delegated instanceof ParseExpression pe) {
+        Expression sourceField = pe.getSourceField();
+        if (sourceField instanceof ReferenceExpression ref) {
+          refs.add(ref);
+        }
+      }
+    }
+
+    requestBuilder.pushDownProjects(refs);
 
     // Return false intentionally to keep the original project operator
     return false;
