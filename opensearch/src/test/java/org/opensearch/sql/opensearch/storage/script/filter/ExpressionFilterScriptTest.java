@@ -80,7 +80,8 @@ class ExpressionFilterScriptTest {
 
   @Test
   void can_execute_expression_with_multivalue_integer_field() {
-    // Multivalue field: doc_values returns List; unwrapMultivalue extracts first element
+    // FakeScriptDocValues stores the list and get(0) returns the first scalar element (30L).
+    // castNumberToFieldType calls toNumber(30L).intValue() which succeeds.
     assertThat()
         .docValues("age", List.of(30L, 40L))
         .filterBy(DSL.greater(ref("age", INTEGER), literal(20)))
@@ -99,6 +100,25 @@ class ExpressionFilterScriptTest {
   void can_execute_expression_with_multivalue_float_field() {
     assertThat()
         .docValues("balance", List.of(100.0, 200.0))
+        .filterBy(DSL.less(ref("balance", FLOAT), literal(150.0F)))
+        .shouldMatch();
+  }
+
+  @Test
+  void can_unwrap_single_element_list_for_integer_field() {
+    // Simulates a runtime scenario where ScriptDocValues.get(0) returns a single-element List
+    // (e.g. ArrayList<Long>) instead of a scalar. toNumber() should unwrap it for INTEGER type.
+    assertThat()
+        .docValuesRaw("age", List.of(42L))
+        .filterBy(DSL.greater(ref("age", INTEGER), literal(20)))
+        .shouldMatch();
+  }
+
+  @Test
+  void can_unwrap_single_element_list_for_float_field() {
+    // Same scenario for FLOAT type: single-element list should be unwrapped by toNumber().
+    assertThat()
+        .docValuesRaw("balance", List.of(99.5))
         .filterBy(DSL.less(ref("balance", FLOAT), literal(150.0F)))
         .shouldMatch();
   }
@@ -225,6 +245,19 @@ class ExpressionFilterScriptTest {
       return this;
     }
 
+    /**
+     * Create doc values where get(0) returns the raw value as-is (including List). This simulates a
+     * runtime scenario where ScriptDocValues.get(0) returns an ArrayList instead of a scalar.
+     */
+    ExprScriptAssertion docValuesRaw(String name, Object rawValue) {
+      LeafDocLookup leafDocLookup =
+          mockLeafDocLookup(ImmutableMap.of(name, new RawFakeScriptDocValues<>(rawValue)));
+
+      when(lookup.getLeafSearchLookup(any())).thenReturn(leafLookup);
+      when(leafLookup.doc()).thenReturn(leafDocLookup);
+      return this;
+    }
+
     ExprScriptAssertion docValues(String name1, Object value1, String name2, Object value2) {
       LeafDocLookup leafDocLookup =
           mockLeafDocLookup(
@@ -280,6 +313,38 @@ class ExpressionFilterScriptTest {
     @Override
     public int size() {
       return values.size();
+    }
+  }
+
+  /**
+   * A ScriptDocValues where get(0) returns the raw value as-is. This simulates a runtime scenario
+   * where ScriptDocValues wraps a value that is itself a List (e.g. ArrayList&lt;Long&gt;), so the
+   * caller of get(0) receives a List rather than a scalar.
+   */
+  @SuppressWarnings("unchecked")
+  private static class RawFakeScriptDocValues<T> extends ScriptDocValues<T> {
+    private final T rawValue;
+
+    public RawFakeScriptDocValues(T rawValue) {
+      this.rawValue = rawValue;
+    }
+
+    @Override
+    public void setNextDocId(int docId) {
+      throw new UnsupportedOperationException("Raw fake script doc values doesn't implement this");
+    }
+
+    @Override
+    public T get(int index) {
+      if (index == 0) {
+        return rawValue;
+      }
+      throw new IndexOutOfBoundsException("Only index 0 is supported");
+    }
+
+    @Override
+    public int size() {
+      return 1;
     }
   }
 }

@@ -120,8 +120,6 @@ public class ExpressionScript {
     }
 
     Object value = docValue.get(0);
-    // Multivalue fields may return a List even from get(0); unwrap to first scalar element.
-    value = unwrapMultivalue(value);
     if (value instanceof ChronoZonedDateTime) {
       return ((ChronoZonedDateTime<?>) value).toInstant();
     }
@@ -130,8 +128,12 @@ public class ExpressionScript {
 
   /**
    * DocValue only support long and double so cast to integer and float if needed. The doc value
-   * must be Long and Double for expr type Long/Integer and Double/Float respectively. Otherwise
-   * there must be bugs in our engine that causes the mismatch.
+   * must be Long and Double for expr type Long/Integer and Double/Float respectively.
+   *
+   * <p>Multivalue fields may return a List (ArrayList) instead of a scalar Number from doc_values.
+   * We unwrap single-element lists only for scalar numeric types (INTEGER, FLOAT) to avoid a
+   * ClassCastException while preserving true array semantics for multi-element lists and
+   * non-numeric types.
    */
   private Object castNumberToFieldType(Object value, ExprType type) {
     if (value == null) {
@@ -139,23 +141,26 @@ public class ExpressionScript {
     }
 
     if (type == INTEGER) {
-      return ((Number) value).intValue();
+      return toNumber(value).intValue();
     } else if (type == FLOAT) {
-      return ((Number) value).floatValue();
+      return toNumber(value).floatValue();
     } else {
       return value;
     }
   }
 
   /**
-   * Unwrap a multivalue field value. OpenSearch may return a List (ArrayList) for scalar-mapped
-   * fields that contain multiple values at runtime. Extract the first element so downstream
-   * operators receive a scalar value instead of a collection.
+   * Convert a value to {@link Number}, unwrapping a single-element List if necessary. OpenSearch
+   * doc_values may return an ArrayList containing a single Long/Double for scalar-mapped fields.
    */
-  private static Object unwrapMultivalue(Object value) {
-    if (value instanceof List<?> list) {
-      return list.isEmpty() ? null : list.get(0);
+  private static Number toNumber(Object value) {
+    if (value instanceof Number num) {
+      return num;
     }
-    return value;
+    if (value instanceof List<?> list && list.size() == 1 && list.get(0) instanceof Number num) {
+      return num;
+    }
+    throw new IllegalStateException(
+        "Unexpected value type for numeric field: " + value.getClass().getName());
   }
 }

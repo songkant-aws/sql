@@ -237,13 +237,7 @@ public class CalciteScriptEngine implements ScriptEngine {
     }
 
     public Object getFromSource(String name) {
-      Object value = this.sourceLookup.get(name);
-      // Multivalue fields return a List from _source; extract the first element for scalar
-      // context so downstream operators don't receive an ArrayList where a scalar is expected.
-      if (value instanceof List<?> list) {
-        return list.isEmpty() ? null : list.get(0);
-      }
-      return value;
+      return this.sourceLookup.get(name);
     }
   }
 
