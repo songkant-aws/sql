@@ -5,21 +5,26 @@
 
 package org.opensearch.sql.calcite;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.opensearch.sql.datasource.DataSourceService;
+import org.opensearch.sql.datasource.model.DataSource;
+import org.opensearch.sql.datasource.model.DataSourceMetadata;
+import org.opensearch.sql.datasource.model.DataSourceType;
+import org.opensearch.sql.storage.CalciteSchemaProvider;
 
 /**
  * Calcite {@link AbstractSchema} that exposes one Calcite sub-schema per registered ClickHouse
  * datasource. Sub-schema map is resolved lazily on each access; individual sub-schemas are obtained
- * from each CH datasource's {@code StorageEngine} via a narrow interface so {@code core} stays
- * decoupled from the {@code clickhouse} module.
+ * from each CH datasource's {@code StorageEngine} via {@link CalciteSchemaProvider} so {@code core}
+ * stays decoupled from the {@code clickhouse} module.
  *
- * <p>This stub returns an empty sub-schema map. Wiring to CH datasources is added in a later
- * milestone.
+ * <p>A null {@code dataSourceService} is tolerated (returns an empty map) so plan-only test
+ * harnesses that build a {@code FrameworkConfig} without a live service still succeed.
  */
 @Getter
 @AllArgsConstructor
@@ -30,7 +35,19 @@ public class ClickHouseSchema extends AbstractSchema {
 
   @Override
   protected Map<String, Schema> getSubSchemaMap() {
-    // M0: stub — real lookup added in M4.
-    return Map.of();
+    if (dataSourceService == null) {
+      return Map.of();
+    }
+    Map<String, Schema> result = new LinkedHashMap<>();
+    for (DataSourceMetadata md : dataSourceService.getDataSourceMetadata(true)) {
+      if (!DataSourceType.CLICKHOUSE.equals(md.getConnector())) {
+        continue;
+      }
+      DataSource ds = dataSourceService.getDataSource(md.getName());
+      if (ds.getStorageEngine() instanceof CalciteSchemaProvider provider) {
+        result.put(md.getName(), provider.asCalciteSchema(md.getName()));
+      }
+    }
+    return result;
   }
 }

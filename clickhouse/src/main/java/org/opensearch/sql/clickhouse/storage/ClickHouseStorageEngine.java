@@ -16,7 +16,8 @@ import org.opensearch.sql.storage.StorageEngine;
 import org.opensearch.sql.storage.Table;
 
 @RequiredArgsConstructor
-public class ClickHouseStorageEngine implements StorageEngine {
+public class ClickHouseStorageEngine
+    implements StorageEngine, org.opensearch.sql.storage.CalciteSchemaProvider {
   private final ClickHouseDataSourceConfig config;
   private final ClickHouseClient client;
 

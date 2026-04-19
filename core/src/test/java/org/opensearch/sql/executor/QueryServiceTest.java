@@ -215,9 +215,8 @@ class QueryServiceTest {
 
   @Test
   public void framework_config_registers_clickhouse_schema_under_root() throws Exception {
-    // dataSourceService=null is safe today because the ClickHouseSchema stub's
-    // getSubSchemaMap() returns Map.of() without dereferencing the service.
-    // Once M4 wires real sub-schema lookup, replace null with a mock DataSourceService.
+    // dataSourceService=null is tolerated: ClickHouseSchema.getSubSchemaMap() returns an empty
+    // map when the service is null, so plan-only test harnesses work without a live service.
     QueryService service = new QueryService(analyzer, executionEngine, planner, null, settings);
     Method m = QueryService.class.getDeclaredMethod("buildFrameworkConfig");
     m.setAccessible(true);
