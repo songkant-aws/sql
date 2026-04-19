@@ -13,8 +13,11 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 
+import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.Optional;
+import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.tools.FrameworkConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -22,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.opensearch.sql.analysis.Analyzer;
 import org.opensearch.sql.ast.statement.ExplainMode;
 import org.opensearch.sql.ast.tree.UnresolvedPlan;
+import org.opensearch.sql.calcite.ClickHouseSchema;
 import org.opensearch.sql.common.response.ResponseListener;
 import org.opensearch.sql.common.setting.Settings;
 import org.opensearch.sql.common.setting.Settings.Key;
@@ -211,16 +215,16 @@ class QueryServiceTest {
 
   @Test
   public void framework_config_registers_clickhouse_schema_under_root() throws Exception {
+    // dataSourceService=null is safe today because the ClickHouseSchema stub's
+    // getSubSchemaMap() returns Map.of() without dereferencing the service.
+    // Once M4 wires real sub-schema lookup, replace null with a mock DataSourceService.
     QueryService service =
         new QueryService(analyzer, executionEngine, planner, null, settings);
-    java.lang.reflect.Method m = QueryService.class.getDeclaredMethod("buildFrameworkConfig");
+    Method m = QueryService.class.getDeclaredMethod("buildFrameworkConfig");
     m.setAccessible(true);
-    org.apache.calcite.tools.FrameworkConfig cfg =
-        (org.apache.calcite.tools.FrameworkConfig) m.invoke(service);
-    org.apache.calcite.schema.SchemaPlus root = cfg.getDefaultSchema().getParentSchema();
-    assertNotNull(
-        root.getSubSchema(
-            org.opensearch.sql.calcite.ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME));
+    FrameworkConfig cfg = (FrameworkConfig) m.invoke(service);
+    SchemaPlus root = cfg.getDefaultSchema().getParentSchema();
+    assertNotNull(root.getSubSchema(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME));
   }
 
   Helper queryService() {
