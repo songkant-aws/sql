@@ -30,6 +30,18 @@ public class ClickHouseStorageFactory implements DataSourceFactory {
     Map<String, String> props = metadata.getProperties();
     ClickHouseDataSourceConfig cfg = ClickHouseDataSourceConfig.parse(props);
     ClickHouseClient client = ClickHouseClientFactory.create(cfg);
+    try (java.sql.Connection conn = client.getDataSource().getConnection();
+         java.sql.Statement st = conn.createStatement();
+         java.sql.ResultSet rs = st.executeQuery("SELECT 1")) {
+      if (!rs.next()) {
+        throw new org.opensearch.sql.clickhouse.exception.ClickHouseConnectionException(
+            "SELECT 1 returned no rows", null);
+      }
+    } catch (java.sql.SQLException e) {
+      client.close();
+      throw new org.opensearch.sql.clickhouse.exception.ClickHouseConnectionException(
+          "Failed to connect to ClickHouse: " + e.getMessage(), e);
+    }
     return new DataSource(
         metadata.getName(),
         DataSourceType.CLICKHOUSE,
