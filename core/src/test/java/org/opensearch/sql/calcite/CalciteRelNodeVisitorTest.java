@@ -22,7 +22,8 @@ public class CalciteRelNodeVisitorTest {
   @Test
   public void visitRelation_does_not_reject_clickhouse_datasource() {
     // CH datasources must not throw CalciteUnsupportedException; they should fall through
-    // to the scan path. With a null mock context.relBuilder, we expect NPE (not UnsupportedException).
+    // to the scan path. With a null mock context.relBuilder, we expect NPE (not
+    // UnsupportedException).
     DataSourceService dss = mock(DataSourceService.class);
     DataSource ch = mock(DataSource.class);
     when(ch.getConnectorType()).thenReturn(DataSourceType.CLICKHOUSE);
@@ -48,7 +49,6 @@ public class CalciteRelNodeVisitorTest {
     CalciteRelNodeVisitor visitor = new CalciteRelNodeVisitor(dss);
     Relation node = new Relation(QualifiedName.of("promds", "metric"));
 
-    assertThrows(
-        CalciteUnsupportedException.class, () -> visitor.visitRelation(node, null));
+    assertThrows(CalciteUnsupportedException.class, () -> visitor.visitRelation(node, null));
   }
 }

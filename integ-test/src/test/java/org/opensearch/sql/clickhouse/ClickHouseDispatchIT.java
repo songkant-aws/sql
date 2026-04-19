@@ -17,8 +17,8 @@ import org.opensearch.sql.ppl.PPLIntegTestCase;
  * scan path. No CH datasource is registered yet, so the query must fail at a later stage (scan
  * resolution or datasource lookup) rather than at the {@code CalciteUnsupportedException} guard.
  *
- * <p>Once the connector is wired in later milestones, this test is superseded by
- * {@code ClickHouseBasicQueryIT}.
+ * <p>Once the connector is wired in later milestones, this test is superseded by {@code
+ * ClickHouseBasicQueryIT}.
  *
  * <p><strong>Note:</strong> Not executed in M0; relies on M4 cluster-bootstrap infrastructure.
  */

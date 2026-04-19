@@ -236,8 +236,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
         context.relBuilder.scan(node.getTableQualifiedName().getParts());
         return context.relBuilder.peek();
       }
-      throw new CalciteUnsupportedException(
-          "Datasource " + dsName + " is unsupported in Calcite");
+      throw new CalciteUnsupportedException("Datasource " + dsName + " is unsupported in Calcite");
     }
 
     if (nameResolver.getIdentifierName().equals(DATASOURCES_TABLE_NAME)) {

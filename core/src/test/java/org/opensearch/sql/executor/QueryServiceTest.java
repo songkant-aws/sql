@@ -218,8 +218,7 @@ class QueryServiceTest {
     // dataSourceService=null is safe today because the ClickHouseSchema stub's
     // getSubSchemaMap() returns Map.of() without dereferencing the service.
     // Once M4 wires real sub-schema lookup, replace null with a mock DataSourceService.
-    QueryService service =
-        new QueryService(analyzer, executionEngine, planner, null, settings);
+    QueryService service = new QueryService(analyzer, executionEngine, planner, null, settings);
     Method m = QueryService.class.getDeclaredMethod("buildFrameworkConfig");
     m.setAccessible(true);
     FrameworkConfig cfg = (FrameworkConfig) m.invoke(service);
