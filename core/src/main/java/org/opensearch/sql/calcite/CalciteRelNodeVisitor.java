@@ -180,6 +180,7 @@ import org.opensearch.sql.common.error.ErrorReport;
 import org.opensearch.sql.common.patterns.PatternUtils;
 import org.opensearch.sql.common.utils.StringUtils;
 import org.opensearch.sql.datasource.DataSourceService;
+import org.opensearch.sql.datasource.model.DataSourceType;
 import org.opensearch.sql.exception.CalciteUnsupportedException;
 import org.opensearch.sql.exception.SemanticCheckException;
 import org.opensearch.sql.expression.HighlightExpression;
@@ -223,12 +224,22 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     DataSourceSchemaIdentifierNameResolver nameResolver =
         new DataSourceSchemaIdentifierNameResolver(
             dataSourceService, node.getTableQualifiedName().getParts());
-    if (!nameResolver
-        .getDataSourceName()
-        .equals(DataSourceSchemaIdentifierNameResolver.DEFAULT_DATASOURCE_NAME)) {
+    String dsName = nameResolver.getDataSourceName();
+    boolean isDefault =
+        dsName.equals(DataSourceSchemaIdentifierNameResolver.DEFAULT_DATASOURCE_NAME);
+
+    if (!isDefault) {
+      DataSourceType dsType = dataSourceService.getDataSource(dsName).getConnectorType();
+      if (DataSourceType.CLICKHOUSE.equals(dsType)) {
+        // Route via Calcite root SchemaPlus → ClickHouseSchema → per-datasource sub-schema.
+        // M4.2 will prepend the "ClickHouse" schema name; for now parts map 1:1 into scan.
+        context.relBuilder.scan(node.getTableQualifiedName().getParts());
+        return context.relBuilder.peek();
+      }
       throw new CalciteUnsupportedException(
-          "Datasource " + nameResolver.getDataSourceName() + " is unsupported in Calcite");
+          "Datasource " + dsName + " is unsupported in Calcite");
     }
+
     if (nameResolver.getIdentifierName().equals(DATASOURCES_TABLE_NAME)) {
       throw new CalciteUnsupportedException("SHOW DATASOURCES is unsupported in Calcite");
     }
