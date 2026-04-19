@@ -1,9 +1,17 @@
 # ClickHouse Datasource for OpenSearch SQL Plugin — Design Spec
 
-- **Date**: 2026-04-19
+- **Date**: 2026-04-19 (revised after feasibility check)
 - **Status**: Draft (pending user review)
 - **Scope**: Read-only ClickHouse connector for PPL via Calcite JdbcSchema pushdown
 - **Out of scope**: write path, cross-engine federation, CDC, CH-specific PPL functions, AI routing, vector search, CH cluster topology
+
+### Revision note (after feasibility investigation)
+
+Direction B confirmed feasible. Two deltas vs. initial draft:
+
+1. **`ClickHouseSchema` lives in `core/` (not `clickhouse/`)** — because `QueryService` (in `core`) registers it into the per-query Calcite root `SchemaPlus`, and `core` cannot depend back on `clickhouse`. The schema uses `DataSourceService` to reach the per-datasource `ClickHouseStorageEngine` (in `clickhouse/`) via lazy lookup; the dependency direction stays `clickhouse → core`.
+2. **Table resolution path**: PPL table reference `my_ch.analytics.events` → `CalciteRelNodeVisitor.visitRelation` → dispatch on datasource type → `relBuilder.scan(["my_ch", "analytics", "events"])` → Calcite resolves via `ClickHouseSchema.getSubSchemaMap()[my_ch].getTableMap()[events]` → returns a `JdbcTable` (Calcite's built-in). No `toRel()` override on `core.Table` needed. §3.2 class responsibilities table updated accordingly.
+3. **Sub-schema organization**: one Calcite sub-schema per CH datasource name (not one global CH schema). Each wraps its own `JdbcSchema` with its own `DataSource`, `SqlDialect`, and declared schema registry. This isolates per-datasource `JdbcConvention` instances cleanly.
 
 ---
 
@@ -23,15 +31,14 @@ The design reuses existing OpenSearch SQL patterns (datasource registration API,
 clickhouse/
 ├── build.gradle
 └── src/main/java/org/opensearch/sql/clickhouse/
-    ├── ClickHousePlugin.java          # Guice bindings (wired from plugin/)
+    ├── ClickHousePlugin.java           # Guice bindings (wired from plugin/)
     ├── storage/
     │   ├── ClickHouseStorageEngine.java    # implements core.StorageEngine
-    │   ├── ClickHouseTable.java            # implements core.Table; toRel() -> JdbcTableScan
-    │   └── ClickHouseSchemaFactory.java    # declared schema -> Calcite SchemaPlus
+    │   ├── ClickHouseTable.java            # implements core.Table (metadata only; Calcite scan path does NOT call toRel())
+    │   └── ClickHouseSchemaFactory.java    # builds a Calcite Schema for this datasource from declared schema
     ├── calcite/
     │   ├── ClickHouseConvention.java       # extends JdbcConvention
-    │   ├── ClickHouseSqlDialect.java       # extends SqlDialect (CH-specific)
-    │   └── ClickHouseRules.java            # (optional) extra rules
+    │   └── ClickHouseSqlDialect.java       # extends SqlDialect (CH-specific)
     ├── client/
     │   ├── ClickHouseClient.java           # HikariCP DataSource wrapper + rate limiting
     │   └── ClickHouseClientFactory.java
@@ -47,9 +54,12 @@ clickhouse/
 
 Touched existing modules:
 
-- `datasources/` — add `DataSourceType.CLICKHOUSE` and register the connector.
+- `core/` — **new**: `core/.../calcite/ClickHouseSchema.java` (AbstractSchema; lazy sub-schemas keyed by datasource name; reaches `DataSourceService` for each CH datasource's Calcite Schema). **Modify**: `QueryService.buildFrameworkConfig()` to register `ClickHouseSchema` under the root SchemaPlus alongside `OpenSearchSchema`. **Modify**: `CalciteRelNodeVisitor.visitRelation()` to dispatch on datasource type instead of rejecting non-default datasources.
+- `datasources/` — add `DataSourceType.CLICKHOUSE` and register the connector factory.
 - `plugin/` — wire `ClickHousePlugin` in `OpenSearchPluginModule`.
 - `integ-test/` — new subpackage `clickhouse/` with Testcontainers-based ITs.
+
+**Dependency direction**: `plugin → clickhouse → {core, datasources}`. `core` does NOT depend on `clickhouse`; the new `core.calcite.ClickHouseSchema` reaches `ClickHouseStorageEngine` only through the `DataSourceService` + `StorageEngine` interfaces (already defined in `core`).
 
 ### 1.2 `clickhouse/build.gradle` dependencies
 
@@ -157,13 +167,16 @@ source = my_ch.analytics.events
 PPL: source = my_ch.analytics.events | where amount > 10 | stats count() by user_email
     ↓ PPLSyntaxParser + AstBuilder        (ppl module, existing)
   UnresolvedPlan
-    ↓ Analyzer (resolves my_ch.analytics.events via DataSourceService)
-  LogicalPlan (root: LogicalRelation → ClickHouseTable)
-    ↓ CalciteRelNodeVisitor                (core module, existing)
-  RelNode tree (LogicalFilter → LogicalAggregate → TableScan)
+    ↓ CalciteRelNodeVisitor.visitRelation   (core module, modified)
+       — dispatches on datasource type:
+         - default/@opensearch → existing OpenSearchSchema path
+         - CLICKHOUSE          → relBuilder.scan(["my_ch", "analytics", "events"])
+                                  resolves via root SchemaPlus → ClickHouseSchema
+                                  → per-datasource Calcite sub-schema → JdbcTable
+  RelNode tree (LogicalFilter → LogicalAggregate → JdbcTableScan)
     ↓ Planner (VolcanoPlanner)
     ↓ JdbcRules match ClickHouseConvention
-  JdbcTableScan → JdbcFilter → JdbcAggregate   (all in JDBC convention)
+  JdbcFilter → JdbcAggregate → JdbcTableScan   (all in JDBC convention)
     ↓ JdbcToEnumerableConverter              (inserted if any local-only op remains)
     ↓ JdbcImplementor.visit()  →  CH SQL string
     ↓ HikariCP DataSource → ClickHouse JDBC
@@ -176,13 +189,14 @@ PPL: source = my_ch.analytics.events | where amount > 10 | stats count() by user
 
 ### 3.2 Class responsibilities
 
-| Class | Responsibility |
-|---|---|
-| `ClickHouseStorageEngine` | Built by `DataSourceService` at registration. Holds `ClickHouseDataSourceConfig`, `ClickHouseClient`, and declared-schema registry. `getTable(name)` returns `ClickHouseTable`. |
-| `ClickHouseTable` | Implements `core.Table`. `toRel(ctx)` delegates to Calcite `JdbcTable.toRel()`, producing a `JdbcTableScan` bound to the per-datasource `ClickHouseConvention` instance. |
-| `ClickHouseSchemaFactory` | Converts `ClickHouseDataSourceConfig.schema` (explicit declaration) into a Calcite `SchemaPlus`. Each table becomes a `JdbcTable` we construct directly (we do NOT call `JdbcSchema.create()` — that would run JDBC metadata discovery, which §2.3 rejects). |
-| `ClickHouseConvention` | `extends JdbcConvention`. Holds a `ClickHouseSqlDialect` instance. `register(planner)` registers `JdbcRules.RULES` scoped to this `VolcanoPlanner` instance — no global `RelOptRules` mutation. |
-| `ClickHouseSqlDialect` | `extends SqlDialect`. Overrides identifier quoting (backticks), `LIMIT` syntax, function name mapping, type CAST rewriting (see §5.4). Controls which `RexCall`s are pushdown-eligible via `supportsFunction()`. |
+| Class | Location | Responsibility |
+|---|---|---|
+| `ClickHouseSchema` | `core/.../calcite/` | `extends AbstractSchema`. Registered once per Calcite root SchemaPlus. `getSubSchemaMap()` lazily reaches `DataSourceService`, enumerates CH datasources, and returns one Calcite sub-schema per CH datasource (keyed by datasource name). Each sub-schema is built by the CH datasource's `ClickHouseSchemaFactory` via a narrow interface exposed on `ClickHouseStorageEngine`. |
+| `ClickHouseStorageEngine` | `clickhouse/storage/` | Built by `DataSourceService` at registration. Holds `ClickHouseDataSourceConfig`, `ClickHouseClient`, and declared-schema registry. Also exposes `asCalciteSchema(): org.apache.calcite.schema.Schema` for `ClickHouseSchema` to call. `getTable(name)` returns `ClickHouseTable` (metadata-only; used by the v2/legacy path, not the Calcite scan path). |
+| `ClickHouseTable` | `clickhouse/storage/` | Implements `core.Table` — used for metadata (`getFieldTypes()`) and the non-Calcite execution path. **Not** involved in the Calcite pushdown scan path (that goes through `ClickHouseSchema` → `JdbcTable`). |
+| `ClickHouseSchemaFactory` | `clickhouse/storage/` | Converts `ClickHouseDataSourceConfig.schema` (explicit declaration) into a Calcite `Schema`. The Schema holds one `JdbcTable` per declared table, using the per-datasource `DataSource` + `ClickHouseSqlDialect` + `ClickHouseConvention`. We construct each `JdbcTable` directly with declared types — we do NOT call `JdbcSchema.create()`, which would trigger runtime metadata discovery that §2.3 explicitly rejects. |
+| `ClickHouseConvention` | `clickhouse/calcite/` | `extends JdbcConvention`. One instance per CH datasource. Holds the datasource's `ClickHouseSqlDialect`. `register(planner)` registers `JdbcRules.RULES` scoped to the per-query `VolcanoPlanner` — no global `RelOptRules` mutation. |
+| `ClickHouseSqlDialect` | `clickhouse/calcite/` | `extends SqlDialect`. Overrides identifier quoting (backticks), `LIMIT` syntax, function name mapping, type CAST rewriting (see §5.4). Controls which `RexCall`s are pushdown-eligible via `supportsFunction()`. |
 
 ### 3.3 Operator pushdown matrix
 
@@ -442,6 +456,7 @@ Reference target (not a CI gate): pushdown path ≥ 5× faster than all-local.
 
 | Milestone | Deliverable | Gate |
 |---|---|---|
+| **M0 — Calcite multi-datasource dispatch** | `core/.../calcite/ClickHouseSchema.java` (AbstractSchema shell); `QueryService.buildFrameworkConfig()` registers it under root SchemaPlus; `CalciteRelNodeVisitor.visitRelation` dispatches on CLICKHOUSE datasource type. Stub returns empty schema map — no CH connector wired yet. | Existing tests green; new unit test asserts visitRelation routes CH datasource via scan path |
 | **M1 — Scaffolding** | `clickhouse/` module, `build.gradle`, `settings.gradle` entry, empty `ClickHouseStorageEngine`, `DataSourceType.CLICKHOUSE`; `./gradlew :clickhouse:build` passes | CI green |
 | **M2 — Registration & Connection** | `ClickHouseDataSourceConfig` + `ClickHouseClient` (HikariCP) + `ClickHouseAuthProvider` (basic/TLS/JWT/multi-host); `POST _datasources` succeeds + `SELECT 1` probe | `ClickHouseRegistrationIT` green |
 | **M3 — Schema & Types** | `ClickHouseSchemaFactory` + `ClickHouseTypeMapper` + whitelist validation | `ClickHouseTypeMapperTest` + `ClickHouseSchemaDriftIT` green |
@@ -451,7 +466,7 @@ Reference target (not a CI gate): pushdown path ≥ 5× faster than all-local.
 | **M7 — Metrics & Audit** | `ClickHouseMetrics` + `ClickHouseAuditLogger` (async queue + daily rollover) | `ClickHouseAuditIT` + `ClickHouseMetricsIT` green |
 | **M8 — Docs & Benchmarks** | User doc `docs/user/ppl/admin/connectors/clickhouse_connector.rst`, dev doc, benchmark scripts | §7.4 reference target met |
 
-Dependencies: M1 → M2 → M3 → M4 → {M5, M6} → M7 → M8. M5 and M6 may run in parallel.
+Dependencies: M0 → M1 → M2 → M3 → M4 → {M5, M6} → M7 → M8. M5 and M6 may run in parallel.
 
 ### 8.2 Out of scope
 
