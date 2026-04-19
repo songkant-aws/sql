@@ -51,4 +51,11 @@ public class CalciteRelNodeVisitorTest {
 
     assertThrows(CalciteUnsupportedException.class, () -> visitor.visitRelation(node, null));
   }
+
+  // NOTE (M4.2 / Option 2): A unit test verifying the "ClickHouse" prefix is prepended was
+  // considered but is not feasible here. CalcitePlanContext has only private constructors and
+  // its `relBuilder` field is `public final` (cannot be reassigned after construction), so
+  // Mockito cannot intercept the scan call without a full FrameworkConfig. The functional
+  // verification is handled by ClickHousePlanSmokeTest (which proves the schema is reachable
+  // via the prefixed scan) and the upcoming M4.3 integration test.
 }

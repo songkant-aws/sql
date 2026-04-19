@@ -232,8 +232,11 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       DataSourceType dsType = dataSourceService.getDataSource(dsName).getConnectorType();
       if (DataSourceType.CLICKHOUSE.equals(dsType)) {
         // Route via Calcite root SchemaPlus → ClickHouseSchema → per-datasource sub-schema.
-        // M4.2 will prepend the "ClickHouse" schema name; for now parts map 1:1 into scan.
-        context.relBuilder.scan(node.getTableQualifiedName().getParts());
+        // Prepend the "ClickHouse" schema name so RelBuilder resolves against ClickHouseSchema.
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        parts.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME);
+        parts.addAll(node.getTableQualifiedName().getParts());
+        context.relBuilder.scan(parts);
         return context.relBuilder.peek();
       }
       throw new CalciteUnsupportedException("Datasource " + dsName + " is unsupported in Calcite");
