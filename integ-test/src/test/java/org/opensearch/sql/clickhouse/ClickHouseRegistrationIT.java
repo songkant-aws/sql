@@ -89,8 +89,7 @@ public class ClickHouseRegistrationIT extends PPLIntegTestCase {
       client().performRequest(req);
       org.junit.Assert.fail("Expected failure");
     } catch (org.opensearch.client.ResponseException e) {
-      String body =
-          new String(e.getResponse().getEntity().getContent().readAllBytes());
+      String body = new String(e.getResponse().getEntity().getContent().readAllBytes());
       assertThat(body.toLowerCase(), containsString("clickhouse"));
     }
   }
@@ -114,16 +113,13 @@ public class ClickHouseRegistrationIT extends PPLIntegTestCase {
             + "\","
             + "\"clickhouse.auth.password\":\""
             + CH.getPassword()
-            + "\","
-            + "\"clickhouse.schema\":\"{\\\"databases\\\":[{\\\"name\\\":\\\"db\\\",\\\"tables\\\":[{\\\"name\\\":\\\"t\\\",\\\"columns\\\":[{\\\"name\\\":\\\"c\\\",\\\"ch_type\\\":\\\"UInt64\\\",\\\"expr_type\\\":\\\"LONG\\\"}]}]}]}\""
-            + "}"
-            + "}");
+            + "\",\"clickhouse.schema\":\"{\\\"databases\\\":[{\\\"name\\\":\\\"db\\\",\\\"tables\\\":[{\\\"name\\\":\\\"t\\\",\\\"columns\\\":[{\\\"name\\\":\\\"c\\\",\\\"ch_type\\\":\\\"UInt64\\\",\\\"expr_type\\\":\\\"LONG\\\"}]}]}]}\""
+            + "}}");
     try {
       client().performRequest(req);
       org.junit.Assert.fail("Expected schema validation failure");
     } catch (org.opensearch.client.ResponseException e) {
-      String body =
-          new String(e.getResponse().getEntity().getContent().readAllBytes());
+      String body = new String(e.getResponse().getEntity().getContent().readAllBytes());
       assertThat(body, containsString("UInt64"));
     }
   }
