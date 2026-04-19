@@ -58,4 +58,26 @@ public class ClickHouseStorageEngineTest {
         SemanticCheckException.class,
         () -> engine.getTable(new DataSourceSchemaName("my_ch", "x"), "y"));
   }
+
+  @Test
+  public void asCalciteSchema_returns_non_null_schema_with_declared_subschema() {
+    ClickHouseTableSpec col = new ClickHouseTableSpec(
+        "events", List.of(new ClickHouseColumnSpec("id", "Int64", "LONG")));
+    ClickHouseTableSpec.Database db = new ClickHouseTableSpec.Database("analytics", List.of(col));
+    ClickHouseDataSourceConfig cfg = ClickHouseDataSourceConfig.builder()
+        .uri("jdbc:clickhouse://h:8123/default")
+        .authType("basic").username("u").password("p")
+        .poolMaxSize(10).poolMinIdle(2)
+        .rateLimitQps(50).rateLimitConcurrent(20).slowQueryThresholdMs(5000)
+        .schema(new ClickHouseTableSpec.Schema(List.of(db))).build();
+
+    ClickHouseClient client = mock(ClickHouseClient.class);
+    org.mockito.Mockito.when(client.getDataSource()).thenReturn(mock(javax.sql.DataSource.class));
+
+    ClickHouseStorageEngine engine = new ClickHouseStorageEngine(cfg, client);
+    org.apache.calcite.schema.Schema s = engine.asCalciteSchema("my_ch");
+    assertNotNull(s);
+    assertNotNull(s.getSubSchema("analytics"));
+    assertNotNull(s.getSubSchema("analytics").getTable("events"));
+  }
 }
