@@ -24,6 +24,7 @@ include 'async-query'
 include 'direct-query-core'
 include 'direct-query'
 include 'language-grammar'
+include 'clickhouse'
 
 // exclude integ-test/doctest in case of offline build since they need downloads
 if (!gradle.startParameter.offline) {
