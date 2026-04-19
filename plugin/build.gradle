@@ -163,6 +163,7 @@ dependencies {
     api project(':legacy')
     api project(':opensearch')
     api project(':prometheus')
+    api project(':clickhouse')
     api project(':datasources')
     api project(':async-query')
     api project(':direct-query')

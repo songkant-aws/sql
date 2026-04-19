@@ -56,6 +56,7 @@ import org.opensearch.rest.RestHandler;
 import org.opensearch.script.ScriptContext;
 import org.opensearch.script.ScriptEngine;
 import org.opensearch.script.ScriptService;
+import org.opensearch.sql.clickhouse.storage.ClickHouseStorageFactory;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.datasources.auth.DataSourceUserAuthorizationHelper;
 import org.opensearch.sql.datasources.auth.DataSourceUserAuthorizationHelperImpl;
@@ -399,6 +400,7 @@ public class SQLPlugin extends Plugin
                 new OpenSearchDataSourceFactory(
                     new OpenSearchNodeClient(this.client), pluginSettings))
             .add(new PrometheusStorageFactory(pluginSettings))
+            .add(new ClickHouseStorageFactory(pluginSettings))
             .add(new GlueDataSourceFactory(pluginSettings))
             .add(new SecurityLakeDataSourceFactory(pluginSettings))
             .build(),
