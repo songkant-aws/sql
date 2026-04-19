@@ -31,6 +31,7 @@ import org.opensearch.sql.ast.tree.HighlightConfig;
 import org.opensearch.sql.ast.tree.UnresolvedPlan;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.CalciteRelNodeVisitor;
+import org.opensearch.sql.calcite.ClickHouseSchema;
 import org.opensearch.sql.calcite.OpenSearchSchema;
 import org.opensearch.sql.calcite.SysLimit;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
@@ -360,6 +361,8 @@ public class QueryService {
     final SchemaPlus opensearchSchema =
         rootSchema.add(
             OpenSearchSchema.OPEN_SEARCH_SCHEMA_NAME, new OpenSearchSchema(dataSourceService));
+    rootSchema.add(
+        ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, new ClickHouseSchema(dataSourceService));
     Frameworks.ConfigBuilder configBuilder =
         Frameworks.newConfigBuilder()
             .parserConfig(SqlParser.Config.DEFAULT) // TODO check

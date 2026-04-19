@@ -209,6 +209,20 @@ class QueryServiceTest {
         ast, queryType, responseListener, ExplainMode.STANDARD, Optional.of(calciteError));
   }
 
+  @Test
+  public void framework_config_registers_clickhouse_schema_under_root() throws Exception {
+    QueryService service =
+        new QueryService(analyzer, executionEngine, planner, null, settings);
+    java.lang.reflect.Method m = QueryService.class.getDeclaredMethod("buildFrameworkConfig");
+    m.setAccessible(true);
+    org.apache.calcite.tools.FrameworkConfig cfg =
+        (org.apache.calcite.tools.FrameworkConfig) m.invoke(service);
+    org.apache.calcite.schema.SchemaPlus root = cfg.getDefaultSchema().getParentSchema();
+    assertNotNull(
+        root.getSubSchema(
+            org.opensearch.sql.calcite.ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME));
+  }
+
   Helper queryService() {
     return new Helper();
   }
