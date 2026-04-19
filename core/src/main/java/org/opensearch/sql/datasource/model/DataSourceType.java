@@ -17,12 +17,13 @@ public class DataSourceType {
   public static final DataSourceType OPENSEARCH = new DataSourceType("OPENSEARCH");
   public static final DataSourceType S3GLUE = new DataSourceType("S3GLUE");
   public static final DataSourceType SECURITY_LAKE = new DataSourceType("SECURITY_LAKE");
+  public static final DataSourceType CLICKHOUSE = new DataSourceType("CLICKHOUSE");
 
   // Map from uppercase DataSourceType name to DataSourceType object
   private static final Map<String, DataSourceType> knownValues = new HashMap<>();
 
   static {
-    register(PROMETHEUS, OPENSEARCH, S3GLUE, SECURITY_LAKE);
+    register(PROMETHEUS, OPENSEARCH, S3GLUE, SECURITY_LAKE, CLICKHOUSE);
   }
 
   private final String name;

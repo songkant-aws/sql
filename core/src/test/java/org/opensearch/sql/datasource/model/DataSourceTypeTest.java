@@ -6,6 +6,7 @@
 package org.opensearch.sql.datasource.model;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
@@ -34,5 +35,12 @@ class DataSourceTypeTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> DataSourceType.register(new DataSourceType("s3glue")));
+  }
+
+  @Test
+  public void clickhouse_type_registered_and_lookup_case_insensitive() {
+    assertEquals("CLICKHOUSE", DataSourceType.CLICKHOUSE.name());
+    assertSame(DataSourceType.CLICKHOUSE, DataSourceType.fromString("clickhouse"));
+    assertSame(DataSourceType.CLICKHOUSE, DataSourceType.fromString("CLICKHOUSE"));
   }
 }
