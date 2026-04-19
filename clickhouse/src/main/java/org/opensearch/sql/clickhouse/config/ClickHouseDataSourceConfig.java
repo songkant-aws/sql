@@ -78,6 +78,27 @@ public class ClickHouseDataSourceConfig {
       throw new IllegalArgumentException("Invalid clickhouse.schema JSON: " + e.getMessage(), e);
     }
 
+    // Validate every (ch_type, expr_type) pair against the whitelist; collect all violations.
+    java.util.List<String> violations = new java.util.ArrayList<>();
+    for (ClickHouseTableSpec.Database db : schema.getDatabases()) {
+      for (ClickHouseTableSpec tbl : db.getTables()) {
+        for (ClickHouseColumnSpec col : tbl.getColumns()) {
+          try {
+            org.opensearch.sql.clickhouse.type.ClickHouseTypeMapper.resolve(
+                col.getChType(), col.getExprType());
+          } catch (org.opensearch.sql.clickhouse.exception.ClickHouseSchemaException e) {
+            violations.add(
+                db.getName() + "." + tbl.getName() + "." + col.getName()
+                    + " (" + col.getChType() + ", " + col.getExprType() + "): " + e.getMessage());
+          }
+        }
+      }
+    }
+    if (!violations.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Schema contains unsupported columns:\n  " + String.join("\n  ", violations));
+    }
+
     return ClickHouseDataSourceConfig.builder()
         .uri(uri)
         .authType(authType)

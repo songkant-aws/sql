@@ -71,4 +71,24 @@ public class ClickHouseDataSourceConfigTest {
     assertEquals(20, cfg.getRateLimitConcurrent());
     assertTrue(cfg.getSchema().getDatabases().isEmpty());
   }
+
+  @Test
+  public void rejects_schema_with_unsupported_ch_type_listing_all_violations() {
+    String schemaJson =
+        "{\"databases\":[{\"name\":\"db\",\"tables\":[{\"name\":\"t\",\"columns\":["
+            + "{\"name\":\"a\",\"ch_type\":\"UInt64\",\"expr_type\":\"LONG\"},"
+            + "{\"name\":\"b\",\"ch_type\":\"Decimal(10,2)\",\"expr_type\":\"DOUBLE\"},"
+            + "{\"name\":\"c\",\"ch_type\":\"Int64\",\"expr_type\":\"LONG\"}]}]}]}";
+    Map<String, String> props = Map.of(
+        "clickhouse.uri", "jdbc:clickhouse://h:8123/default",
+        "clickhouse.auth.type", "basic",
+        "clickhouse.auth.username", "u",
+        "clickhouse.auth.password", "p",
+        "clickhouse.schema", schemaJson);
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> ClickHouseDataSourceConfig.parse(props));
+    assertTrue(ex.getMessage().contains("a"));
+    assertTrue(ex.getMessage().contains("b"));
+    // "c" is valid; should NOT appear.
+  }
 }
