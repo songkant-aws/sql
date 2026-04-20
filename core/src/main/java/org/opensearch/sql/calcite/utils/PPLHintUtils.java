@@ -5,10 +5,9 @@
 
 package org.opensearch.sql.calcite.utils;
 
-import com.google.common.base.Suppliers;
-import java.util.function.Supplier;
 import lombok.experimental.UtilityClass;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.hint.HintPredicates;
 import org.apache.calcite.rel.hint.HintStrategyTable;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.logical.LogicalAggregate;
@@ -20,17 +19,16 @@ public class PPLHintUtils {
   private static final String KEY_IGNORE_NULL_BUCKET = "ignoreNullBucket";
   private static final String KEY_HAS_NESTED_AGG_CALL = "hasNestedAggCall";
 
-  private static final Supplier<HintStrategyTable> HINT_STRATEGY_TABLE =
-      Suppliers.memoize(
-          () ->
-              HintStrategyTable.builder()
-                  .hintStrategy(
-                      HINT_AGG_ARGUMENTS,
-                      (hint, rel) -> {
-                        return rel instanceof LogicalAggregate;
-                      })
-                  // add more here
-                  .build());
+  public static final HintStrategyTable HINT_STRATEGY_TABLE =
+      HintStrategyTable.builder()
+          .hintStrategy(
+              HINT_AGG_ARGUMENTS,
+              (hint, rel) -> {
+                return rel instanceof LogicalAggregate;
+              })
+          .hintStrategy("bounded_left", HintPredicates.JOIN)
+          // add more here
+          .build();
 
   /**
    * Add hint to aggregate to indicate that the aggregate will ignore null value bucket. Notice, the
@@ -43,7 +41,7 @@ public class PPLHintUtils {
         RelHint.builder(HINT_AGG_ARGUMENTS).hintOption(KEY_IGNORE_NULL_BUCKET, "true").build();
     relBuilder.hints(statHint);
     if (relBuilder.getCluster().getHintStrategies() == HintStrategyTable.EMPTY) {
-      relBuilder.getCluster().setHintStrategies(HINT_STRATEGY_TABLE.get());
+      relBuilder.getCluster().setHintStrategies(HINT_STRATEGY_TABLE);
     }
   }
 
@@ -58,7 +56,7 @@ public class PPLHintUtils {
         RelHint.builder(HINT_AGG_ARGUMENTS).hintOption(KEY_HAS_NESTED_AGG_CALL, "true").build();
     relBuilder.hints(statHint);
     if (relBuilder.getCluster().getHintStrategies() == HintStrategyTable.EMPTY) {
-      relBuilder.getCluster().setHintStrategies(HINT_STRATEGY_TABLE.get());
+      relBuilder.getCluster().setHintStrategies(HINT_STRATEGY_TABLE);
     }
   }
 

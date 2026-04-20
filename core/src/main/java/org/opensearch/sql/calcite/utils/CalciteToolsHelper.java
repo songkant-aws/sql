@@ -143,15 +143,13 @@ public class CalciteToolsHelper {
    * fabricate a fresh empty root. Calcite's {@link org.apache.calcite.adapter.jdbc.
    * JdbcToEnumerableConverter} codegen calls {@code DataContext.ROOT.getRootSchema().getSubSchema
    * (name)} at runtime, so the connection's root must be the same tree we registered our
-   * sub-schemas on during planning — otherwise the sub-schema lookup returns null and the
-   * generated bind code NPEs. We thread the planning rootSchema all the way here instead of
-   * walking {@code SchemaPlus.getParentSchema()} (which is fragile: Calcite can clone or
-   * re-wrap the default schema's parent chain during prepare).
+   * sub-schemas on during planning — otherwise the sub-schema lookup returns null and the generated
+   * bind code NPEs. We thread the planning rootSchema all the way here instead of walking {@code
+   * SchemaPlus.getParentSchema()} (which is fragile: Calcite can clone or re-wrap the default
+   * schema's parent chain during prepare).
    */
   public static Connection connect(
-      FrameworkConfig config,
-      JavaTypeFactory typeFactory,
-      @Nullable SchemaPlus rootSchema) {
+      FrameworkConfig config, JavaTypeFactory typeFactory, @Nullable SchemaPlus rootSchema) {
     final Properties info = new Properties();
     if (config.getTypeSystem() != RelDataTypeSystem.DEFAULT) {
       info.setProperty(
@@ -159,10 +157,8 @@ public class CalciteToolsHelper {
           config.getTypeSystem().getClass().getName());
     }
     try {
-      CalciteSchema calciteRootSchema =
-          rootSchema != null ? CalciteSchema.from(rootSchema) : null;
-      return new OpenSearchDriver()
-          .connect("jdbc:calcite:", info, calciteRootSchema, typeFactory);
+      CalciteSchema calciteRootSchema = rootSchema != null ? CalciteSchema.from(rootSchema) : null;
+      return new OpenSearchDriver().connect("jdbc:calcite:", info, calciteRootSchema, typeFactory);
     } catch (SQLException e) {
       throw new RuntimeException(e);
     }
@@ -573,7 +569,10 @@ public class CalciteToolsHelper {
 
   /** Try to optimize the plan by using HepPlanner */
   private static final List<RelOptRule> hepRuleList =
-      List.of(FilterMergeRule.Config.DEFAULT.toRule(), PPLSimplifyDedupRule.DEDUP_SIMPLIFY_RULE);
+      List.of(
+          FilterMergeRule.Config.DEFAULT.toRule(),
+          PPLSimplifyDedupRule.DEDUP_SIMPLIFY_RULE,
+          org.opensearch.sql.calcite.planner.logical.rules.BoundedJoinHintRule.INSTANCE);
 
   private static final HepProgram HEP_PROGRAM =
       new HepProgramBuilder().addRuleCollection(hepRuleList).build();
