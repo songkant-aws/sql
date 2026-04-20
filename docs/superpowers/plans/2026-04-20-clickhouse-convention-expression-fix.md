@@ -1055,6 +1055,28 @@ git commit -m "test(clickhouse): un-ignore 6 query ITs after convention expressi
 Binary-mode run with all 9 CH ITs: tests=9 skipped=0 failures=0."
 ```
 
+### Post-hoc notes
+
+**Discovered during execution** (beyond original Task 8 scope — running the ITs
+surfaced these as real production bugs, each with its own follow-up commit in
+Waves 3/4/5 on `feat/clickhouse-datasource`):
+
+1. **rootSchema threading**: `CalciteToolsHelper.connect()` passed `null` rootSchema to
+   `OpenSearchDriver.connect`, so runtime codegen's `DataContext.ROOT.getRootSchema()` got
+   an empty root and failed to find sub-schemas. Fixed by threading the FrameworkConfig
+   rootSchema through `QueryService → CalcitePlanContext → CalciteToolsHelper.connect`.
+2. **Single-step unwrap(DataSource.class)**: Calcite's `JdbcToEnumerableConverter` codegen
+   invokes `unwrap(DataSource.class)` directly on the sub-schema — NOT the two-step
+   `unwrap(JdbcSchema.class).unwrap(DataSource.class)` chain the Wave 3 regression test pinned.
+   Fixed by making `OuterWrapper`/`WrappingSchema` delegate `unwrap(clazz)` to inner
+   `JdbcSchema.unwrap(clazz)` (Calcite idiom).
+3. **Gradle 9.2 incompatibility**: `SpawnProcessTask` (plugin `com.wiredforcode.spawn`) breaks
+   on Gradle 9.2 ("Could not find method buildProcess()"). Replaced with pure Gradle tasks
+   using `ProcessBuilder` + pid file + HTTP `/ping` readiness.
+4. **ClickHouse SQL dialect OFFSET FETCH**: ClickHouse rejects ANSI `OFFSET n FETCH NEXT k`
+   without `ORDER BY` (Code 628). Overrode `ClickHouseSqlDialect.unparseOffsetFetch` to
+   emit `LIMIT k OFFSET n`.
+
 ---
 
 ## Task 9: Update design doc with verification outcome
