@@ -6,6 +6,8 @@
 package org.opensearch.sql.calcite;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
@@ -17,7 +19,6 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
-import org.apache.calcite.schema.Schema;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
@@ -66,15 +67,16 @@ public class ClickHousePlanSmokeTest {
     // 3. Wire the synthetic sub-schema into a mocked CalciteSchemaProvider-bearing StorageEngine.
     StorageEngine engine =
         mock(StorageEngine.class, withSettings().extraInterfaces(CalciteSchemaProvider.class));
-    when(((CalciteSchemaProvider) engine).asCalciteSchema("my_ch")).thenReturn(chSchemaRoot);
+    when(((CalciteSchemaProvider) engine).asCalciteSchema(eq("my_ch"), any(SchemaPlus.class)))
+        .thenReturn(chSchemaRoot);
 
     DataSource ds = mock(DataSource.class);
     when(ds.getStorageEngine()).thenReturn(engine);
     when(dss.getDataSource("my_ch")).thenReturn(ds);
 
-    // 4. Register ClickHouseSchema under a planning root.
+    // 4. Register ClickHouseSchema under a planning root via install() so schemaPlus is captured.
     SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
-    root.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, new ClickHouseSchema(dss));
+    ClickHouseSchema.install(root, dss);
 
     FrameworkConfig cfg = Frameworks.newConfigBuilder().defaultSchema(root).build();
     RelBuilder rb = RelBuilder.create(cfg);
@@ -89,11 +91,10 @@ public class ClickHousePlanSmokeTest {
 
   @Test
   public void schema_instance_is_ignored_when_data_source_service_is_null() {
-    // Direct scan under a manually-registered ClickHouseSchema with no backing service is a
-    // no-op (empty sub-schema map). Ensures the class is safe to instantiate in Framework setup.
+    // Direct install of a ClickHouseSchema with no backing service is a no-op (empty sub-schema
+    // map). Ensures the class is safe to instantiate in Framework setup.
     SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
-    Schema schema = new ClickHouseSchema(null);
-    root.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, schema);
+    ClickHouseSchema.install(root, null);
     // No assertion needed — absence of exception is the signal.
   }
 }

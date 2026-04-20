@@ -75,7 +75,9 @@ public class ClickHouseStorageEngineTest {
     org.mockito.Mockito.when(client.getDataSource()).thenReturn(mock(javax.sql.DataSource.class));
 
     ClickHouseStorageEngine engine = new ClickHouseStorageEngine(cfg, client);
-    org.apache.calcite.schema.Schema s = engine.asCalciteSchema("my_ch");
+    org.apache.calcite.schema.SchemaPlus parent =
+        org.apache.calcite.jdbc.CalciteSchema.createRootSchema(true, false).plus();
+    org.apache.calcite.schema.Schema s = engine.asCalciteSchema("my_ch", parent);
     assertNotNull(s);
     assertNotNull(s.getSubSchema("analytics"));
     assertNotNull(s.getSubSchema("analytics").getTable("events"));

@@ -10,7 +10,9 @@ import static org.mockito.Mockito.mock;
 
 import java.util.List;
 import javax.sql.DataSource;
+import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.schema.Schema;
+import org.apache.calcite.schema.SchemaPlus;
 import org.junit.jupiter.api.Test;
 import org.opensearch.sql.clickhouse.config.ClickHouseColumnSpec;
 import org.opensearch.sql.clickhouse.config.ClickHouseTableSpec;
@@ -31,7 +33,8 @@ public class ClickHouseSchemaFactoryTest {
                                 new ClickHouseColumnSpec("name", "String", "STRING")))))));
 
     DataSource ds = mock(DataSource.class);
-    Schema schema = ClickHouseSchemaFactory.build("my_ch", ds, spec);
+    SchemaPlus parent = CalciteSchema.createRootSchema(true, false).plus();
+    Schema schema = ClickHouseSchemaFactory.build(parent, "my_ch", ds, spec);
     assertNotNull(schema);
     // Expect a sub-schema "analytics"
     Schema analytics = schema.getSubSchema("analytics");

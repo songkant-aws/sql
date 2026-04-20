@@ -361,8 +361,7 @@ public class QueryService {
     final SchemaPlus opensearchSchema =
         rootSchema.add(
             OpenSearchSchema.OPEN_SEARCH_SCHEMA_NAME, new OpenSearchSchema(dataSourceService));
-    rootSchema.add(
-        ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, new ClickHouseSchema(dataSourceService));
+    ClickHouseSchema.install(rootSchema, dataSourceService);
     Frameworks.ConfigBuilder configBuilder =
         Frameworks.newConfigBuilder()
             .parserConfig(SqlParser.Config.DEFAULT) // TODO check

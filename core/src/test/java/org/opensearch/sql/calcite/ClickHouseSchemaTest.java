@@ -8,12 +8,16 @@ package org.opensearch.sql.calcite;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
 import java.util.Set;
+import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.schema.Schema;
+import org.apache.calcite.schema.SchemaPlus;
 import org.junit.jupiter.api.Test;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.datasource.model.DataSource;
@@ -38,7 +42,13 @@ public class ClickHouseSchemaTest {
     when(openSearchMd.getConnector()).thenReturn(DataSourceType.OPENSEARCH);
     when(dss.getDataSourceMetadata(true)).thenReturn(Set.of(openSearchMd));
 
+    SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
+    // Mount manually so we retain the direct reference; Calcite 1.41.0's SchemaPlusImpl.unwrap
+    // returns the wrapper itself rather than the wrapped Schema, so install() + unwrap would
+    // yield SchemaPlusImpl, not ClickHouseSchema.
     ClickHouseSchema schema = new ClickHouseSchema(dss);
+    SchemaPlus added = root.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, schema);
+    schema.setSchemaPlus(added);
     assertTrue(schema.getSubSchemaMap().isEmpty());
   }
 
@@ -53,13 +63,19 @@ public class ClickHouseSchemaTest {
     Schema chSubSchema = mock(Schema.class);
     StorageEngine engine =
         mock(StorageEngine.class, withSettings().extraInterfaces(CalciteSchemaProvider.class));
-    when(((CalciteSchemaProvider) engine).asCalciteSchema("my_ch")).thenReturn(chSubSchema);
+    // Match any SchemaPlus — the instance is produced inside install().
+    when(((CalciteSchemaProvider) engine).asCalciteSchema(eq("my_ch"), any(SchemaPlus.class)))
+        .thenReturn(chSubSchema);
 
     DataSource ds = mock(DataSource.class);
     when(ds.getStorageEngine()).thenReturn(engine);
     when(dss.getDataSource("my_ch")).thenReturn(ds);
 
+    SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
     ClickHouseSchema schema = new ClickHouseSchema(dss);
+    SchemaPlus added = root.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, schema);
+    schema.setSchemaPlus(added);
+
     assertEquals(1, schema.getSubSchemaMap().size());
     assertTrue(schema.getSubSchemaMap().containsKey("my_ch"));
     assertEquals(chSubSchema, schema.getSubSchemaMap().get("my_ch"));

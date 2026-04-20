@@ -45,7 +45,10 @@ public class ClickHouseStorageEngine
     return new ClickHouseTable(db, tableName, spec.get());
   }
 
-  public org.apache.calcite.schema.Schema asCalciteSchema(String datasourceName) {
-    return ClickHouseSchemaFactory.build(datasourceName, client.getDataSource(), config.getSchema());
+  @Override
+  public org.apache.calcite.schema.Schema asCalciteSchema(
+      String datasourceName, org.apache.calcite.schema.SchemaPlus parentSchema) {
+    return ClickHouseSchemaFactory.build(
+        parentSchema, datasourceName, client.getDataSource(), config.getSchema());
   }
 }
