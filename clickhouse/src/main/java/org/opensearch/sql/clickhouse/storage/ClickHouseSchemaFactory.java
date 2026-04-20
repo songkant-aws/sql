@@ -43,13 +43,26 @@ public final class ClickHouseSchemaFactory {
       String datasourceName,
       DataSource dataSource,
       ClickHouseTableSpec.Schema spec) {
+    // Reject empty spec upfront: if spec.getDatabases() is empty, anyDelegate stays null and
+    // downstream OuterWrapper.unwrap(JdbcSchema.class) silently returns null, which later
+    // surfaces as an NPE deep inside Calcite codegen with no useful context. Fail fast here
+    // with a message that points the user back to their datasource config.
+    if (spec.getDatabases().isEmpty()) {
+      throw new IllegalArgumentException(
+          "ClickHouse datasource '"
+              + datasourceName
+              + "' must declare at least one database in its table spec, but 'databases' was"
+              + " empty. Check the datasource properties (schema.databases) and ensure every"
+              + " configured datasource has at least one database entry.");
+    }
     Expression expression =
         Schemas.subSchemaExpression(parentSchema, datasourceName, JdbcSchema.class);
     ClickHouseConvention convention = ClickHouseConvention.of(datasourceName, expression);
     final Map<String, Schema> subs = new LinkedHashMap<>();
-    // Hold a reference to any one of the per-database JdbcSchemas so the outer schema can
+    // Hold a reference to the FIRST per-database JdbcSchema so the outer schema can
     // expose it via unwrap(JdbcSchema.class). All per-db schemas share the same DataSource,
-    // so which one we pick doesn't matter to codegen's subsequent .unwrap(DataSource.class).
+    // so which one we pick doesn't matter to codegen's subsequent .unwrap(DataSource.class);
+    // we pick the first for determinism (tests pin this invariant).
     JdbcSchema anyDelegate = null;
     for (ClickHouseTableSpec.Database db : spec.getDatabases()) {
       AbstractSchema perDbWrapper =
@@ -62,7 +75,20 @@ public final class ClickHouseSchemaFactory {
               db.getTables());
       subs.put(db.getName(), perDbWrapper);
       if (anyDelegate == null) {
-        // perDbWrapper is a WrappingSchema; its Wrapper.unwrap returns the inner JdbcSchema.
+        // perDbWrapper is produced by ClickHouseJdbcSchemaBuilder.build, whose contract is to
+        // return a Schema that also implements Wrapper (documented on that method). Guard the
+        // cast with a checked state rather than relying silently on the invariant: if the
+        // builder ever changes, the ClassCastException that would surface much later during
+        // Calcite codegen is replaced here with a clear, source-located error.
+        if (!(perDbWrapper instanceof Wrapper)) {
+          throw new IllegalStateException(
+              "ClickHouseJdbcSchemaBuilder.build returned a Schema that does not implement"
+                  + " org.apache.calcite.schema.Wrapper (got "
+                  + perDbWrapper.getClass().getName()
+                  + "). The outer per-datasource schema needs to expose an inner JdbcSchema"
+                  + " via Wrapper.unwrap; update the builder to return a Wrapper-capable"
+                  + " schema.");
+        }
         anyDelegate = ((Wrapper) perDbWrapper).unwrap(JdbcSchema.class);
       }
     }
