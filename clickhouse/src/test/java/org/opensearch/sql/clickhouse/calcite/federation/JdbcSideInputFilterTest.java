@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.apache.calcite.adapter.jdbc.JdbcConvention;
+import org.apache.calcite.adapter.jdbc.JdbcSchema;
+import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -21,6 +24,7 @@ import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.RelBuilder;
 import org.junit.jupiter.api.Test;
+import org.opensearch.sql.clickhouse.calcite.ClickHouseConvention;
 import org.opensearch.sql.clickhouse.calcite.ClickHouseSqlDialect;
 
 public class JdbcSideInputFilterTest {
@@ -49,11 +53,27 @@ public class JdbcSideInputFilterTest {
             .makeDynamicParam(tf.createArrayType(tf.createSqlType(SqlTypeName.BIGINT), -1), 0);
 
     RelNode scan = builder.scan("events").build();
-    JdbcSideInputFilter filter = JdbcSideInputFilter.create(scan, /*keyCol=*/ 0, param);
+
+    // A ClickHouseConvention (which extends JdbcConvention) is required so the filter
+    // participates in Calcite's JDBC pushdown path under JdbcToEnumerableConverter. The
+    // expression is irrelevant here — it's only evaluated at codegen time, which the unit
+    // test does not exercise. Tests elsewhere (see ClickHouseConventionTest) cover the
+    // codegen-time resolution invariants.
+    ClickHouseConvention convention =
+        ClickHouseConvention.of(
+            "jdbc_side_input_filter_test", Expressions.constant(null, JdbcSchema.class));
+
+    JdbcSideInputFilter filter =
+        JdbcSideInputFilter.create(scan, /*keyCol=*/ 0, param, convention);
 
     assertNotNull(filter);
     assertEquals(0, filter.getKeyColumnIndex());
     assertEquals(param, filter.getArrayParam());
+    // Spec invariant: the filter must be a JdbcRel in a JdbcConvention so Calcite's JDBC
+    // pushdown path (JdbcToEnumerableConverter) picks up this subtree.
+    assertTrue(
+        filter.getConvention() instanceof JdbcConvention,
+        "Expected filter.getConvention() to be a JdbcConvention, got: " + filter.getConvention());
 
     // SQL-generation smoke test via ClickHouseSqlDialect
     SqlNode node = filter.toSqlNode(ClickHouseSqlDialect.INSTANCE);
