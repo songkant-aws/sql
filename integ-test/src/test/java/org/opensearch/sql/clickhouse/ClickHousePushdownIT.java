@@ -15,24 +15,18 @@ import java.sql.Statement;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Test;
 import org.opensearch.client.Request;
 import org.opensearch.client.Response;
-import org.opensearch.sql.ppl.PPLIntegTestCase;
-import org.testcontainers.clickhouse.ClickHouseContainer;
 
 /**
  * Per-operator pushdown IT: filter / project / sort+limit / explain. Verifies end-to-end
  * correctness and that Calcite's JDBC convention is reached by the planner.
  *
- * <p>Requires Docker. Executed via full integ-test cluster bootstrap.
+ * <p>Runs against either a Testcontainers-managed server (default) or a locally started binary
+ * (opt-in via {@code -DuseClickhouseBinary=true}); see {@link ClickHouseITBase}.
  */
-public class ClickHousePushdownIT extends PPLIntegTestCase {
-
-  @ClassRule
-  public static final ClickHouseContainer CH =
-      new ClickHouseContainer("clickhouse/clickhouse-server:24.3");
+public class ClickHousePushdownIT extends ClickHouseITBase {
 
   private static final String DS_NAME = "ch_push";
 
@@ -53,8 +47,7 @@ public class ClickHousePushdownIT extends PPLIntegTestCase {
   }
 
   private void seedAndRegister() throws Exception {
-    try (Connection c =
-            DriverManager.getConnection(CH.getJdbcUrl(), CH.getUsername(), CH.getPassword());
+    try (Connection c = DriverManager.getConnection(chJdbcUrl(), chUser(), chPassword());
         Statement st = c.createStatement()) {
       st.execute("CREATE DATABASE IF NOT EXISTS a");
       st.execute("DROP TABLE IF EXISTS a.t");
@@ -79,14 +72,14 @@ public class ClickHousePushdownIT extends PPLIntegTestCase {
             + DS_NAME
             + "\",\"connector\":\"CLICKHOUSE\",\"properties\":{"
             + "\"clickhouse.uri\":\""
-            + CH.getJdbcUrl()
+            + chJdbcUrl()
             + "\","
             + "\"clickhouse.auth.type\":\"basic\","
             + "\"clickhouse.auth.username\":\""
-            + CH.getUsername()
+            + chUser()
             + "\","
             + "\"clickhouse.auth.password\":\""
-            + CH.getPassword()
+            + chPassword()
             + "\","
             + "\"clickhouse.schema\":\""
             + schemaJson

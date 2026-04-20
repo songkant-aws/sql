@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!--
+  ~ Copyright OpenSearch Contributors
+  ~ SPDX-License-Identifier: Apache-2.0
+  -->
+<!--
+  Minimal users config for integration tests. The `default` user has no password and is
+  allowed from loopback only. Not intended for any non-test deployment.
+-->
+<clickhouse>
+  <profiles>
+    <default/>
+  </profiles>
+  <users>
+    <default>
+      <password></password>
+      <networks>
+        <ip>127.0.0.1</ip>
+      </networks>
+      <profile>default</profile>
+      <quota>default</quota>
+      <access_management>1</access_management>
+    </default>
+  </users>
+  <quotas>
+    <default/>
+  </quotas>
+</clickhouse>

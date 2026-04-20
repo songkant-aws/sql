@@ -55,6 +55,9 @@ String bwcFilePath = "src/test/resources/bwc/"
 String calciteCodegen = "$projectDir/src/test/java/codegen/"
 String ignorePrometheusProp = System.getProperty("ignorePrometheus")
 boolean ignorePrometheus = ignorePrometheusProp != null && !ignorePrometheusProp.equalsIgnoreCase("false")
+// Opt-in: launch a local ClickHouse server from a downloaded binary instead of Testcontainers.
+// Use when Docker is unavailable. Default false keeps the existing Testcontainers IT path.
+boolean useClickhouseBinary = "true".equalsIgnoreCase(System.getProperty("useClickhouseBinary"))
 
 repositories {
     mavenLocal()
@@ -355,6 +358,96 @@ task stopPrometheus(type: KillProcessTask) {
 
 stopPrometheus.mustRunAfter startPrometheus
 
+def isClickhouseRunning() {
+    try {
+        def process = "pgrep -f clickhouse-server".execute()
+        def output = process.text
+        return !output.trim().isEmpty()
+    } catch (Exception ignored) {
+        return false
+    }
+}
+
+// Polls ClickHouse's HTTP /ping endpoint (more reliable than stdout log regex, per spike).
+def waitForClickhouseReady = { int timeoutSec ->
+    def deadline = System.currentTimeMillis() + timeoutSec * 1000L
+    while (System.currentTimeMillis() < deadline) {
+        try {
+            def conn = new URL("http://127.0.0.1:18123/ping").openConnection()
+            conn.connectTimeout = 1000
+            conn.readTimeout = 1000
+            if (conn.responseCode == 200) {
+                println "ClickHouse is ready (HTTP /ping=200)"
+                return
+            }
+        } catch (Exception ignored) {
+            // still starting; retry
+        }
+        Thread.sleep(500)
+    }
+    throw new GradleException("ClickHouse did not become ready within ${timeoutSec}s")
+}
+
+task startClickhouse(type: SpawnProcessTask) {
+    mustRunAfter ':doctest:doctest'
+
+    doFirst {
+        File chDir = Paths.get("$projectDir/bin", "clickhouse").toFile()
+        File tgz = Paths.get("$projectDir/bin", "clickhouse-${clickhouse_binary_version}.tgz").toFile()
+        if (!tgz.exists()) {
+            tgz.parentFile.mkdirs()
+            download.run {
+                src getClickhouseBinaryLocation()
+                dest tgz
+            }
+        }
+        if (!new File(chDir, "usr/bin/clickhouse").exists()) {
+            chDir.mkdirs()
+            copy {
+                from tarTree(tgz)
+                into chDir
+                // Tarball root is clickhouse-common-static-<ver>-<arch>/usr/bin/clickhouse; strip to chDir/usr/bin/...
+                eachFile { details ->
+                    def parts = details.path.split('/')
+                    if (parts.length > 1) {
+                        details.path = parts.drop(1).join('/')
+                    }
+                }
+                includeEmptyDirs = false
+            }
+        }
+        // Stage minimal config alongside the binary each run (idempotent).
+        copy {
+            from "$projectDir/src/test/resources/clickhouse"
+            include 'config.xml', 'users.xml'
+            into chDir
+        }
+        // Fresh data dir per run — MergeTree refuses to reattach to stale metadata after upgrades.
+        file("/tmp/opensearch-ch-it").deleteDir()
+        file("/tmp/opensearch-ch-it").mkdirs()
+    }
+    // SpawnProcessTask runs the command in the background and watches stdout for the `ready`
+    // string. We use a minimal-match pattern and then fall back to an HTTP probe in doLast so
+    // the ready signal is actually a live /ping check.
+    command "$projectDir/bin/clickhouse/usr/bin/clickhouse server --config-file=$projectDir/bin/clickhouse/config.xml"
+    ready 'Application:'   // any early log line; real readiness is enforced by the doLast probe
+    onlyIf { useClickhouseBinary && !isClickhouseRunning() }
+
+    doLast {
+        waitForClickhouseReady(60)
+    }
+}
+
+task stopClickhouse(type: KillProcessTask) {
+    onlyIf { useClickhouseBinary }
+    doLast {
+        // Leave the extracted binary in place for subsequent runs (only ~180 MB); wipe data.
+        file("/tmp/opensearch-ch-it").deleteDir()
+    }
+}
+
+stopClickhouse.mustRunAfter startClickhouse
+
 task integJdbcTest(type: RestIntegTestTask) {
     testClusters.findAll {c -> c.clusterName == "integJdbcTest"}.first().
         plugin ":opensearch-sql-plugin"
@@ -486,6 +579,12 @@ integTest {
     if(!ignorePrometheus && getOSFamilyType() != "windows") {
         dependsOn startPrometheus
         finalizedBy stopPrometheus
+    }
+    if (useClickhouseBinary && getOSFamilyType() != "windows") {
+        dependsOn startClickhouse
+        finalizedBy stopClickhouse
+        // Tell IT tests (ClickHouseITBase) to skip Testcontainers and dial the local binary.
+        systemProperty 'useClickhouseBinary', 'true'
     }
 
     // enable calcite codegen in IT

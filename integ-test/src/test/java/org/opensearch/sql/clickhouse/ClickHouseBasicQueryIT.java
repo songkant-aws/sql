@@ -14,25 +14,18 @@ import java.sql.Statement;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Test;
 import org.opensearch.client.Request;
 import org.opensearch.client.Response;
-import org.opensearch.sql.ppl.PPLIntegTestCase;
-import org.testcontainers.clickhouse.ClickHouseContainer;
 
 /**
- * End-to-end IT: seed a ClickHouse container, register it as a datasource, run PPL queries that
+ * End-to-end IT: seed a ClickHouse instance, register it as a datasource, run PPL queries that
  * resolve to CH tables, verify rows come back.
  *
- * <p>Requires Docker. This IT is executed via the full integ-test cluster bootstrap and is not part
- * of any smaller unit-test surface.
+ * <p>Runs against either a Testcontainers-managed server (default) or a locally started binary
+ * (opt-in via {@code -DuseClickhouseBinary=true}); see {@link ClickHouseITBase}.
  */
-public class ClickHouseBasicQueryIT extends PPLIntegTestCase {
-
-  @ClassRule
-  public static final ClickHouseContainer CH =
-      new ClickHouseContainer("clickhouse/clickhouse-server:24.3");
+public class ClickHouseBasicQueryIT extends ClickHouseITBase {
 
   private static final String DS_NAME = "ch_basic";
 
@@ -54,8 +47,7 @@ public class ClickHouseBasicQueryIT extends PPLIntegTestCase {
   }
 
   private void seedClickHouse() throws Exception {
-    try (Connection c =
-            DriverManager.getConnection(CH.getJdbcUrl(), CH.getUsername(), CH.getPassword());
+    try (Connection c = DriverManager.getConnection(chJdbcUrl(), chUser(), chPassword());
         Statement st = c.createStatement()) {
       st.execute("CREATE DATABASE IF NOT EXISTS analytics");
       st.execute("DROP TABLE IF EXISTS analytics.events");
@@ -91,14 +83,14 @@ public class ClickHouseBasicQueryIT extends PPLIntegTestCase {
             + "\"connector\":\"CLICKHOUSE\","
             + "\"properties\":{"
             + "\"clickhouse.uri\":\""
-            + CH.getJdbcUrl()
+            + chJdbcUrl()
             + "\","
             + "\"clickhouse.auth.type\":\"basic\","
             + "\"clickhouse.auth.username\":\""
-            + CH.getUsername()
+            + chUser()
             + "\","
             + "\"clickhouse.auth.password\":\""
-            + CH.getPassword()
+            + chPassword()
             + "\","
             + "\"clickhouse.schema\":\""
             + schemaJson

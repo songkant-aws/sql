@@ -10,17 +10,11 @@ import static org.hamcrest.Matchers.containsString;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Test;
 import org.opensearch.client.Request;
 import org.opensearch.client.Response;
-import org.opensearch.sql.ppl.PPLIntegTestCase;
-import org.testcontainers.clickhouse.ClickHouseContainer;
 
-public class ClickHouseRegistrationIT extends PPLIntegTestCase {
-  @ClassRule
-  public static final ClickHouseContainer CH =
-      new ClickHouseContainer("clickhouse/clickhouse-server:24.3");
+public class ClickHouseRegistrationIT extends ClickHouseITBase {
 
   private static final String DS_NAME = "ch_reg_it";
 
@@ -50,14 +44,14 @@ public class ClickHouseRegistrationIT extends PPLIntegTestCase {
             + "\"connector\":\"CLICKHOUSE\","
             + "\"properties\":{"
             + "\"clickhouse.uri\":\""
-            + CH.getJdbcUrl()
+            + chJdbcUrl()
             + "\","
             + "\"clickhouse.auth.type\":\"basic\","
             + "\"clickhouse.auth.username\":\""
-            + CH.getUsername()
+            + chUser()
             + "\","
             + "\"clickhouse.auth.password\":\""
-            + CH.getPassword()
+            + chPassword()
             + "\","
             + "\"clickhouse.schema\":\"{\\\"databases\\\":[]}\""
             + "}"
@@ -77,7 +71,7 @@ public class ClickHouseRegistrationIT extends PPLIntegTestCase {
             + "\"connector\":\"CLICKHOUSE\","
             + "\"properties\":{"
             + "\"clickhouse.uri\":\""
-            + CH.getJdbcUrl()
+            + chJdbcUrl()
             + "\","
             + "\"clickhouse.auth.type\":\"basic\","
             + "\"clickhouse.auth.username\":\"wrong\","
@@ -105,14 +99,14 @@ public class ClickHouseRegistrationIT extends PPLIntegTestCase {
             + "\"connector\":\"CLICKHOUSE\","
             + "\"properties\":{"
             + "\"clickhouse.uri\":\""
-            + CH.getJdbcUrl()
+            + chJdbcUrl()
             + "\","
             + "\"clickhouse.auth.type\":\"basic\","
             + "\"clickhouse.auth.username\":\""
-            + CH.getUsername()
+            + chUser()
             + "\","
             + "\"clickhouse.auth.password\":\""
-            + CH.getPassword()
+            + chPassword()
             + "\",\"clickhouse.schema\":\"{\\\"databases\\\":[{\\\"name\\\":\\\"db\\\",\\\"tables\\\":[{\\\"name\\\":\\\"t\\\",\\\"columns\\\":[{\\\"name\\\":\\\"c\\\",\\\"ch_type\\\":\\\"UInt64\\\",\\\"expr_type\\\":\\\"LONG\\\"}]}]}]}\""
             + "}}");
     try {

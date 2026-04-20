@@ -12,6 +12,7 @@ buildscript {
         version_tokens = opensearch_version.tokenize('-')
         opensearch_build = version_tokens[0] + '.0'
         prometheus_binary_version = "2.37.2"
+        clickhouse_binary_version = "24.3.11.7"
         common_utils_version = System.getProperty("common_utils.version", opensearch_build)
         if (buildVersionQualifier) {
             opensearch_build += "-${buildVersionQualifier}"
@@ -48,6 +49,10 @@ buildscript {
         }
         getPrometheusBinaryLocation = { ->
             return "https://github.com/prometheus/prometheus/releases/download/v${prometheus_binary_version}/prometheus-${prometheus_binary_version}."+ getOSFamilyType() + "-" + getArchType() + ".tar.gz"
+        }
+        getClickhouseBinaryLocation = { ->
+            // Official LTS static tarball. Extracts to usr/bin/clickhouse inside the tarball.
+            return "https://packages.clickhouse.com/tgz/lts/clickhouse-common-static-${clickhouse_binary_version}-${getArchType()}.tgz"
         }
         // TODO: Migrate following to Gradle version catalog || Read from OpenSearch BOM in the future.
         // See: https://github.com/opensearch-project/sql/issues/3257
