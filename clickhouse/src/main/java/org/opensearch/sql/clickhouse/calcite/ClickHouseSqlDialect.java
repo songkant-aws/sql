@@ -8,6 +8,8 @@ package org.opensearch.sql.clickhouse.calcite;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlWriter;
 
 public class ClickHouseSqlDialect extends SqlDialect {
   public static final SqlDialect.Context CTX =
@@ -67,5 +69,19 @@ public class ClickHouseSqlDialect extends SqlDialect {
       default:
         return false;
     }
+  }
+
+  /**
+   * ClickHouse rejects ANSI {@code OFFSET ... FETCH NEXT ... ROWS ONLY} with
+   * "Code: 628. DB::Exception: Can not use OFFSET FETCH clause without ORDER BY." It accepts
+   * {@code LIMIT <count> [OFFSET <skip>]} just fine — which is also what Calcite's own bundled
+   * {@code org.apache.calcite.sql.dialect.ClickHouseSqlDialect} generates. Default
+   * {@link SqlDialect#unparseOffsetFetch} emits ANSI syntax, so override to the LIMIT form.
+   * (We don't inherit from Calcite's CH dialect because this module owns a leaner
+   * customization — just override the one method we need.)
+   */
+  @Override
+  public void unparseOffsetFetch(SqlWriter writer, SqlNode offset, SqlNode fetch) {
+    unparseFetchUsingLimit(writer, offset, fetch);
   }
 }

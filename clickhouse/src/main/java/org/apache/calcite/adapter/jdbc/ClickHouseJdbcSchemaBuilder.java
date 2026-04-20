@@ -76,14 +76,21 @@ public final class ClickHouseJdbcSchemaBuilder {
 
     @Override
     public <T> T unwrap(Class<T> clazz) {
-      // Entry point reached via SchemaPlusImpl.unwrap → Wrapper.unwrapOrThrow → this.unwrap.
-      // Expose the inner JdbcSchema so the next .unwrap(DataSource.class) step (on the
-      // JdbcSchema itself, which also implements Wrapper) can reach the real DataSource.
+      // Entry point reached via SchemaPlusImpl.unwrap. Calcite's runtime codegen resolves
+      // JDBC pushed-down expressions by calling `.unwrap(DataSource.class)` directly on this
+      // schema (no explicit intermediate `.unwrap(JdbcSchema.class)` step), so we must
+      // delegate unknown classes to the inner JdbcSchema's own unwrap — it natively handles
+      // DataSource.class by returning `getDataSource()`. Mirror the standard Calcite idiom
+      // (this-first, then delegate) rather than special-casing DataSource here.
+      if (clazz.isInstance(this)) {
+        return clazz.cast(this);
+      }
       if (clazz.isInstance(delegate)) {
         return clazz.cast(delegate);
       }
-      if (clazz.isInstance(this)) {
-        return clazz.cast(this);
+      T c = delegate.unwrap(clazz);
+      if (c != null) {
+        return c;
       }
       return null;
     }

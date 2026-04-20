@@ -392,23 +392,30 @@ def waitForClickhouseReady = { int timeoutSec ->
     throw new GradleException("ClickHouse did not become ready within ${timeoutSec}s")
 }
 
-task startClickhouse(type: SpawnProcessTask) {
+// Gradle 9.2 compat: the old `com.wiredforcode.spawn` plugin broke on 9.2 with
+// "Could not find method buildProcess()" inside SpawnProcessTask#exec. It's abandoned upstream,
+// so we replace startClickhouse/stopClickhouse with plain Gradle tasks that fork the CH binary
+// via ProcessBuilder and manage the pid ourselves. Semantics preserved:
+//   * start is only active when -DuseClickhouseBinary=true is set (and CH isn't already running)
+//   * readiness is gated on HTTP /ping, as before
+//   * stop kills the forked pid on teardown
+//   * a stale pid file or orphan `clickhouse server` from a prior run is cleaned up defensively.
+def chPidFile = new File(projectDir, ".clickhouse.pid")
+
+task startClickhouse {
     mustRunAfter ':doctest:doctest'
 
-    // Distinct pid lock file so we don't collide with startPrometheus (both default
-    // to `.pid.lock` in the project root; sharing it causes "Server already running!"
-    // if either task's lock was left behind by a previous run).
-    pidLockFileName = '.clickhouse.pid.lock'
+    onlyIf { useClickhouseBinary && !isClickhouseRunning() }
 
     doFirst {
         // Defensive cleanup: if a previous run crashed or was interrupted before
         // stopClickhouse ran, the following can leak and wedge subsequent runs:
         //   - an orphan `clickhouse server` process still holding ports 18123/19000
-        //   - a stale .clickhouse.pid.lock that makes SpawnProcessTask refuse to start
+        //   - a stale pid file
         //   - a stale /tmp/opensearch-ch-it data dir (handled a few lines below).
         // We kill any process whose command line matches this config-file path (so we
         // only target CH instances we launched, not unrelated users' CH servers) and
-        // drop the stale pid lock. We match on the suffix "integ-test/bin/clickhouse/config.xml"
+        // drop the stale pid file. We match on the suffix "integ-test/bin/clickhouse/config.xml"
         // rather than the full absolute path because gradle may resolve $projectDir through
         // one symlink view (e.g. /workspace/songkant/...) while an earlier run spawned CH
         // under a different view (e.g. /home/songkant/workspace/...); both resolve to the
@@ -429,13 +436,11 @@ task startClickhouse(type: SpawnProcessTask) {
                 }
             }
         } catch (Exception ignored) {
-            // best-effort; if pgrep is unavailable the Spawn task will still throw
-            // "Server already running!" and surface the issue.
+            // best-effort; if pgrep is unavailable, we'll discover the conflict when CH fails to bind.
         }
-        def pidLock = new File(rootDir, pidLockFileName)
-        if (pidLock.exists()) {
-            logger.lifecycle "Removing stale pid lock: ${pidLock}"
-            pidLock.delete()
+        if (chPidFile.exists()) {
+            logger.lifecycle "Removing stale pid file: ${chPidFile}"
+            chPidFile.delete()
         }
 
         File chDir = Paths.get("$projectDir/bin", "clickhouse").toFile()
@@ -472,23 +477,59 @@ task startClickhouse(type: SpawnProcessTask) {
         file("/tmp/opensearch-ch-it").deleteDir()
         file("/tmp/opensearch-ch-it").mkdirs()
     }
-    // SpawnProcessTask runs the command in the background and watches stdout for the `ready`
-    // string. We use a minimal-match pattern and then fall back to an HTTP probe in doLast so
-    // the ready signal is actually a live /ping check.
-    command "$projectDir/bin/clickhouse/usr/bin/clickhouse server --config-file=$projectDir/bin/clickhouse/config.xml"
-    ready 'Application:'   // any early log line; real readiness is enforced by the doLast probe
-    onlyIf { useClickhouseBinary && !isClickhouseRunning() }
 
     doLast {
-        waitForClickhouseReady(60)
+        // Fork clickhouse-server as a detached background process. We use ProcessBuilder +
+        // inheritIO-redirected log so failures are visible in the build output, but we don't
+        // block on stdout — readiness is enforced purely by the HTTP /ping poll.
+        File logFile = new File(projectDir, "build/clickhouse-server.log")
+        logFile.parentFile.mkdirs()
+        def pb = new ProcessBuilder(
+            "$projectDir/bin/clickhouse/usr/bin/clickhouse",
+            "server",
+            "--config-file=$projectDir/bin/clickhouse/config.xml"
+        )
+        pb.redirectErrorStream(true)
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        Process process = pb.start()
+        // Record pid so stopClickhouse can terminate this exact instance.
+        chPidFile.text = String.valueOf(process.pid())
+        logger.lifecycle "Started clickhouse-server pid=${process.pid()} (log: ${logFile})"
+        // Block the task until CH is serving HTTP /ping. This is the only readiness signal
+        // we rely on — matches the prior SpawnProcessTask+doLast probe pattern.
+        try {
+            waitForClickhouseReady(60)
+        } catch (Exception e) {
+            // If readiness probe fails, kill what we spawned so we don't leak.
+            try { process.destroyForcibly() } catch (Exception ignored) {}
+            chPidFile.delete()
+            throw e
+        }
     }
 }
 
-task stopClickhouse(type: KillProcessTask) {
+task stopClickhouse {
     onlyIf { useClickhouseBinary }
-    // Must match startClickhouse; KillProcessTask reads this file to kill the pid.
-    pidLockFileName = '.clickhouse.pid.lock'
     doLast {
+        if (chPidFile.exists()) {
+            String pid = chPidFile.text.trim()
+            if (pid) {
+                try {
+                    ["kill", "-TERM", pid].execute().waitFor()
+                    // Give CH a moment to flush data and exit cleanly.
+                    Thread.sleep(500)
+                    // Force-kill if still running.
+                    def stillUp = ["kill", "-0", pid].execute()
+                    stillUp.waitFor()
+                    if (stillUp.exitValue() == 0) {
+                        ["kill", "-KILL", pid].execute().waitFor()
+                    }
+                } catch (Exception e) {
+                    logger.warn "stopClickhouse: failed to kill pid ${pid}: ${e.message}"
+                }
+            }
+            chPidFile.delete()
+        }
         // Leave the extracted binary in place for subsequent runs (only ~180 MB); wipe data.
         file("/tmp/opensearch-ch-it").deleteDir()
     }

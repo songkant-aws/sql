@@ -93,5 +93,29 @@ public class ClickHouseConventionTest {
         asJdbc,
         "outer ds1 JdbcSchema must NOT be db2's (second database) JdbcSchema — the contract"
             + " is that the first database's delegate is exposed at the outer level");
+
+    // Runtime codegen path: Calcite's JdbcToEnumerableConverter generates
+    //   root.getRootSchema().getSubSchema(ds).unwrap(DataSource.class)
+    // as a SINGLE-STEP unwrap — it does NOT always take the two-step
+    // .unwrap(JdbcSchema).unwrap(DataSource) chain covered above. Pin that path here so we
+    // don't regress the Wave 4 bug (the outer wrapper previously only knew how to expose the
+    // inner JdbcSchema, and a direct .unwrap(DataSource.class) on it returned null, surfacing
+    // as "Can't unwrap interface javax.sql.DataSource from ClickHouseSchemaFactory$OuterWrapper"
+    // at query execution time).
+    DataSource dsFromOuter = resolved.unwrap(DataSource.class);
+    assertNotNull(
+        dsFromOuter,
+        "direct resolved.unwrap(DataSource.class) must return a DataSource — the runtime"
+            + " codegen takes this single-step path, not the two-step chain");
+    assertSame(
+        originalDs,
+        dsFromOuter,
+        "DataSource from single-step outer unwrap must match the registered DataSource");
+
+    // Same invariant at the per-database (WrappingSchema) level — the JDBC codegen can also
+    // dispatch at the db-scoped sub-schema when the JdbcConvention is attached there.
+    DataSource dsFromDb1 = db1Resolved.unwrap(DataSource.class);
+    assertNotNull(dsFromDb1, "db1 sub-schema must expose DataSource via single-step unwrap");
+    assertSame(originalDs, dsFromDb1, "db1 sub-schema's DataSource must match the registered DS");
   }
 }

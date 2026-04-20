@@ -17,7 +17,6 @@ import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.Optional;
 import org.apache.calcite.schema.SchemaPlus;
-import org.apache.calcite.tools.FrameworkConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -220,8 +219,12 @@ class QueryServiceTest {
     QueryService service = new QueryService(analyzer, executionEngine, planner, null, settings);
     Method m = QueryService.class.getDeclaredMethod("buildFrameworkConfig");
     m.setAccessible(true);
-    FrameworkConfig cfg = (FrameworkConfig) m.invoke(service);
-    SchemaPlus root = cfg.getDefaultSchema().getParentSchema();
+    Object calciteConfig = m.invoke(service);
+    // buildFrameworkConfig returns a package-private record (FrameworkConfig + SchemaPlus root);
+    // reach into it via reflection rather than exposing the record type on the public API.
+    Method rootAccessor = calciteConfig.getClass().getDeclaredMethod("rootSchema");
+    rootAccessor.setAccessible(true);
+    SchemaPlus root = (SchemaPlus) rootAccessor.invoke(calciteConfig);
     assertNotNull(root.getSubSchema(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME));
   }
 

@@ -117,11 +117,23 @@ public final class ClickHouseSchemaFactory {
 
     @Override
     public <T> T unwrap(Class<T> clazz) {
-      if (delegate != null && clazz.isInstance(delegate)) {
-        return clazz.cast(delegate);
-      }
+      // Mirror the Calcite idiom (see JdbcSchema.unwrap): check `this` first, then delegate.
+      // The runtime JDBC codegen path calls `parent.getSubSchema(name).unwrap(DataSource.class)`
+      // directly on this outer wrapper (it does NOT always take the two-step
+      // unwrap(JdbcSchema).unwrap(DataSource) chain the Wave 3 regression test covered). So we
+      // must forward to `delegate.unwrap(clazz)` — JdbcSchema.unwrap already handles
+      // DataSource.class (and Connection.class, etc.) natively, so delegation is sufficient.
       if (clazz.isInstance(this)) {
         return clazz.cast(this);
+      }
+      if (delegate != null) {
+        if (clazz.isInstance(delegate)) {
+          return clazz.cast(delegate);
+        }
+        T c = delegate.unwrap(clazz);
+        if (c != null) {
+          return c;
+        }
       }
       return null;
     }

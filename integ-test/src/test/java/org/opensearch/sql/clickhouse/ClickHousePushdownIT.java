@@ -15,7 +15,6 @@ import java.util.Properties;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.opensearch.client.Request;
 import org.opensearch.client.Response;
@@ -98,9 +97,6 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
   }
 
   @Test
-  @Ignore(
-      "Pending Calcite convention fix: JdbcTableScan is not converted to"
-          + " JdbcToEnumerableConverter. Tracked in M5.")
   public void filter_returns_only_matching_rows() throws Exception {
     JSONObject j = executeQuery("source = " + DS_NAME + ".a.t | where id = 42 | fields id");
     assertThat(j.getJSONArray("datarows").length(), equalTo(1));
@@ -108,18 +104,12 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
   }
 
   @Test
-  @Ignore(
-      "Pending Calcite convention fix: JdbcTableScan is not converted to"
-          + " JdbcToEnumerableConverter. Tracked in M5.")
   public void project_drops_unwanted_columns() throws Exception {
     JSONObject j = executeQuery("source = " + DS_NAME + ".a.t | head 1 | fields id");
     assertThat(j.getJSONArray("datarows").getJSONArray(0).length(), equalTo(1));
   }
 
   @Test
-  @Ignore(
-      "Pending Calcite convention fix: JdbcTableScan is not converted to"
-          + " JdbcToEnumerableConverter. Tracked in M5.")
   public void sort_and_limit_return_top_n_descending() throws Exception {
     JSONObject j = executeQuery("source = " + DS_NAME + ".a.t | sort - id | head 3 | fields id");
     assertThat(j.getJSONArray("datarows").length(), equalTo(3));
@@ -127,9 +117,6 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
   }
 
   @Test
-  @Ignore(
-      "Pending Calcite convention fix: JdbcTableScan is not converted to"
-          + " JdbcToEnumerableConverter. Tracked in M5.")
   public void explain_shows_jdbc_convention_nodes() throws Exception {
     Request req = new Request("POST", "/_plugins/_ppl/_explain");
     req.setJsonEntity("{\"query\":\"source = " + DS_NAME + ".a.t | where id > 10\"}");

@@ -14,7 +14,6 @@ import java.util.Properties;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.opensearch.client.Request;
 import org.opensearch.client.Response;
@@ -111,10 +110,6 @@ public class ClickHouseBasicQueryIT extends ClickHouseITBase {
   }
 
   @Test
-  @Ignore(
-      "Pending Calcite convention fix: JdbcTableScan is not converted to"
-          + " JdbcToEnumerableConverter, so physical compilation fails with"
-          + " `No method named \"unwrap\"`. Tracked in M5.")
   public void head_returns_rows() throws Exception {
     JSONObject result =
         executeQuery("source = " + DS_NAME + ".analytics.events | head 3 | fields event_id");
@@ -122,10 +117,6 @@ public class ClickHouseBasicQueryIT extends ClickHouseITBase {
   }
 
   @Test
-  @Ignore(
-      "Pending Calcite convention fix: JdbcTableScan is not converted to"
-          + " JdbcToEnumerableConverter, so physical compilation fails with"
-          + " `No method named \"unwrap\"`. Tracked in M5.")
   public void filter_and_project_end_to_end() throws Exception {
     JSONObject result =
         executeQuery(

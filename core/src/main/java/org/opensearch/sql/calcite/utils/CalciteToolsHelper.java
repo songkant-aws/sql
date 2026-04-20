@@ -135,6 +135,23 @@ public class CalciteToolsHelper {
   }
 
   public static Connection connect(FrameworkConfig config, JavaTypeFactory typeFactory) {
+    return connect(config, typeFactory, null);
+  }
+
+  /**
+   * Open a Calcite JDBC connection bound to {@code rootSchema} rather than letting the driver
+   * fabricate a fresh empty root. Calcite's {@link org.apache.calcite.adapter.jdbc.
+   * JdbcToEnumerableConverter} codegen calls {@code DataContext.ROOT.getRootSchema().getSubSchema
+   * (name)} at runtime, so the connection's root must be the same tree we registered our
+   * sub-schemas on during planning — otherwise the sub-schema lookup returns null and the
+   * generated bind code NPEs. We thread the planning rootSchema all the way here instead of
+   * walking {@code SchemaPlus.getParentSchema()} (which is fragile: Calcite can clone or
+   * re-wrap the default schema's parent chain during prepare).
+   */
+  public static Connection connect(
+      FrameworkConfig config,
+      JavaTypeFactory typeFactory,
+      @Nullable SchemaPlus rootSchema) {
     final Properties info = new Properties();
     if (config.getTypeSystem() != RelDataTypeSystem.DEFAULT) {
       info.setProperty(
@@ -142,7 +159,10 @@ public class CalciteToolsHelper {
           config.getTypeSystem().getClass().getName());
     }
     try {
-      return new OpenSearchDriver().connect("jdbc:calcite:", info, null, typeFactory);
+      CalciteSchema calciteRootSchema =
+          rootSchema != null ? CalciteSchema.from(rootSchema) : null;
+      return new OpenSearchDriver()
+          .connect("jdbc:calcite:", info, calciteRootSchema, typeFactory);
     } catch (SQLException e) {
       throw new RuntimeException(e);
     }

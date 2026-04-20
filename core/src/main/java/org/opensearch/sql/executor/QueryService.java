@@ -143,9 +143,13 @@ public class QueryService {
                 QueryProfiling.activate(QueryContext.isProfileEnabled());
             ProfileMetric analyzeMetric = profileContext.getOrCreateMetric(MetricName.ANALYZE);
             long analyzeStart = System.nanoTime();
+            CalciteConfig calciteConfig = buildFrameworkConfig();
             CalcitePlanContext context =
                 CalcitePlanContext.create(
-                    buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
+                    calciteConfig.config(),
+                    SysLimit.fromSettings(settings),
+                    queryType,
+                    calciteConfig.rootSchema());
 
             context.setHighlightConfig(highlightConfig);
 
@@ -192,9 +196,13 @@ public class QueryService {
         () -> {
           try {
             QueryProfiling.noop();
+            CalciteConfig calciteConfig = buildFrameworkConfig();
             CalcitePlanContext context =
                 CalcitePlanContext.create(
-                    buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
+                    calciteConfig.config(),
+                    SysLimit.fromSettings(settings),
+                    queryType,
+                    calciteConfig.rootSchema());
             context.setHighlightConfig(highlightConfig);
             context.run(
                 () -> {
@@ -355,7 +363,16 @@ public class QueryService {
     return isCalciteEnabled(settings) && queryType == QueryType.PPL;
   }
 
-  private FrameworkConfig buildFrameworkConfig() {
+  /**
+   * Bundle of the {@link FrameworkConfig} and the {@link SchemaPlus} rootSchema it was built
+   * against. The rootSchema is threaded through to {@link CalcitePlanContext} so the JDBC
+   * connection's root matches the planning tree; runtime JDBC codegen resolves sub-schemas from
+   * {@code DataContext.ROOT.getRootSchema()}, and a mismatched (driver-fabricated) root would
+   * make sub-schema lookups return null and NPE inside the generated bind code.
+   */
+  private record CalciteConfig(FrameworkConfig config, SchemaPlus rootSchema) {}
+
+  private CalciteConfig buildFrameworkConfig() {
     // Use simple calcite schema since we don't compute tables in advance of the query.
     final SchemaPlus rootSchema = CalciteSchema.createRootSchema(true, false).plus();
     final SchemaPlus opensearchSchema =
@@ -369,7 +386,7 @@ public class QueryService {
             .traitDefs((List<RelTraitDef>) null)
             .programs(Programs.standard())
             .typeSystem(OpenSearchTypeSystem.INSTANCE);
-    return configBuilder.build();
+    return new CalciteConfig(configBuilder.build(), rootSchema);
   }
 
   /**

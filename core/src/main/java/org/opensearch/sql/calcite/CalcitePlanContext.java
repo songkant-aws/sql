@@ -20,6 +20,7 @@ import lombok.Setter;
 import org.apache.calcite.rex.RexCorrelVariable;
 import org.apache.calcite.rex.RexLambdaRef;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.tools.FrameworkConfig;
 import org.opensearch.sql.ast.expression.UnresolvedExpression;
 import org.opensearch.sql.ast.tree.HighlightConfig;
@@ -74,11 +75,12 @@ public class CalcitePlanContext {
   /** Whether we're currently inside a lambda context. */
   @Getter @Setter private boolean inLambdaContext = false;
 
-  private CalcitePlanContext(FrameworkConfig config, SysLimit sysLimit, QueryType queryType) {
+  private CalcitePlanContext(
+      FrameworkConfig config, SysLimit sysLimit, QueryType queryType, SchemaPlus rootSchema) {
     this.config = config;
     this.sysLimit = sysLimit;
     this.queryType = queryType;
-    this.connection = CalciteToolsHelper.connect(config, TYPE_FACTORY);
+    this.connection = CalciteToolsHelper.connect(config, TYPE_FACTORY, rootSchema);
     this.relBuilder = CalciteToolsHelper.create(config, TYPE_FACTORY, connection);
     this.rexBuilder = new ExtendedRexBuilder(relBuilder.getRexBuilder());
     this.functionProperties = new FunctionProperties(QueryType.PPL);
@@ -144,7 +146,19 @@ public class CalcitePlanContext {
 
   public static CalcitePlanContext create(
       FrameworkConfig config, SysLimit sysLimit, QueryType queryType) {
-    return new CalcitePlanContext(config, sysLimit, queryType);
+    return new CalcitePlanContext(config, sysLimit, queryType, null);
+  }
+
+  /**
+   * Create a context whose JDBC connection is bound to {@code rootSchema}. The runtime codegen
+   * path for pushed-down JDBC (e.g., the ClickHouse convention) resolves sub-schemas from {@code
+   * DataContext.ROOT.getRootSchema()}; that root must be the same tree the planner saw, so we
+   * thread it through the connection here rather than letting Calcite fabricate a fresh empty
+   * root.
+   */
+  public static CalcitePlanContext create(
+      FrameworkConfig config, SysLimit sysLimit, QueryType queryType, SchemaPlus rootSchema) {
+    return new CalcitePlanContext(config, sysLimit, queryType, rootSchema);
   }
 
   /**
