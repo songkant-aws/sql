@@ -52,22 +52,15 @@ public class ClickHouseSchema extends AbstractSchema {
    * #CLICKHOUSE_SCHEMA_NAME}, and capture the returned {@link SchemaPlus} so sub-schema
    * construction can build per-datasource convention expressions against it.
    *
-   * @return the mounted {@link SchemaPlus} (convenience for callers).
+   * @return the mounted {@link ClickHouseSchema} instance (useful for test introspection; the
+   *     mounted {@code SchemaPlus} is available via the root schema tree).
    */
-  public static SchemaPlus install(SchemaPlus rootSchema, DataSourceService dataSourceService) {
+  public static ClickHouseSchema install(
+      SchemaPlus rootSchema, DataSourceService dataSourceService) {
     ClickHouseSchema node = new ClickHouseSchema(dataSourceService);
     SchemaPlus added = rootSchema.add(CLICKHOUSE_SCHEMA_NAME, node);
     node.schemaPlus = added;
-    return added;
-  }
-
-  /**
-   * Package-private setter so tests that need to inspect {@link #getSubSchemaMap} against a
-   * manually-constructed instance (rather than going through {@link #install}) can provide the
-   * required {@link SchemaPlus} reference after mounting the node.
-   */
-  void setSchemaPlus(SchemaPlus schemaPlus) {
-    this.schemaPlus = schemaPlus;
+    return node;
   }
 
   @Override

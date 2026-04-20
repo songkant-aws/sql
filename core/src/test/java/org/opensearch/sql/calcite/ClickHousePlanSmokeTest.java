@@ -91,10 +91,12 @@ public class ClickHousePlanSmokeTest {
 
   @Test
   public void schema_instance_is_ignored_when_data_source_service_is_null() {
-    // Direct install of a ClickHouseSchema with no backing service is a no-op (empty sub-schema
-    // map). Ensures the class is safe to instantiate in Framework setup.
+    // Install with no backing service must produce a valid-but-empty CH sub-schema tree. Proves
+    // the class is safe to instantiate in Framework setup even before datasources are registered.
     SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
     ClickHouseSchema.install(root, null);
-    // No assertion needed — absence of exception is the signal.
+    assertTrue(
+        root.getSubSchema(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME).getSubSchemaNames().isEmpty(),
+        "CH schema must expose no sub-schemas when dataSourceService is null");
   }
 }

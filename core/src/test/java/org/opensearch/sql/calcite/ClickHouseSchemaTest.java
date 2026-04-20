@@ -43,12 +43,7 @@ public class ClickHouseSchemaTest {
     when(dss.getDataSourceMetadata(true)).thenReturn(Set.of(openSearchMd));
 
     SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
-    // Mount manually so we retain the direct reference; Calcite 1.41.0's SchemaPlusImpl.unwrap
-    // returns the wrapper itself rather than the wrapped Schema, so install() + unwrap would
-    // yield SchemaPlusImpl, not ClickHouseSchema.
-    ClickHouseSchema schema = new ClickHouseSchema(dss);
-    SchemaPlus added = root.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, schema);
-    schema.setSchemaPlus(added);
+    ClickHouseSchema schema = ClickHouseSchema.install(root, dss);
     assertTrue(schema.getSubSchemaMap().isEmpty());
   }
 
@@ -72,9 +67,7 @@ public class ClickHouseSchemaTest {
     when(dss.getDataSource("my_ch")).thenReturn(ds);
 
     SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
-    ClickHouseSchema schema = new ClickHouseSchema(dss);
-    SchemaPlus added = root.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME, schema);
-    schema.setSchemaPlus(added);
+    ClickHouseSchema schema = ClickHouseSchema.install(root, dss);
 
     assertEquals(1, schema.getSubSchemaMap().size());
     assertTrue(schema.getSubSchemaMap().containsKey("my_ch"));
