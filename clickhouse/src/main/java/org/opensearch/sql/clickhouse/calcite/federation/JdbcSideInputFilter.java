@@ -4,6 +4,8 @@
  */
 package org.opensearch.sql.clickhouse.calcite.federation;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import org.apache.calcite.adapter.jdbc.JdbcConvention;
 import org.apache.calcite.adapter.jdbc.JdbcImplementor;
 import org.apache.calcite.adapter.jdbc.JdbcRel;
@@ -28,6 +30,7 @@ import org.apache.calcite.sql.SqlSyntax;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
+import org.apache.calcite.sql.type.SqlTypeName;
 
 /**
  * Filter RelNode that emits {@code <keyCol> IN (?)} against a JDBC source, where the sole
@@ -46,6 +49,12 @@ import org.apache.calcite.sql.type.ReturnTypes;
  *
  * <p>The filter's condition is synthesized from {@code keyColumnIndex} and {@code arrayParam}, so
  * equality/hashCode/copy semantics are inherited from {@link Filter}.
+ *
+ * <p><b>Uniqueness requirement:</b> {@code arrayParam.getIndex()} must be unique per logical use
+ * site of this filter within a query plan. The {@link Filter} base class dedupes nodes via {@code
+ * equals}/{@code hashCode} which hash the condition tree; two {@code JdbcSideInputFilter}s with
+ * the same {@code keyColumnIndex} and {@code arrayParam.getIndex()} will collapse to a single
+ * node, which is incorrect if they are meant to bind distinct runtime arrays.
  */
 public final class JdbcSideInputFilter extends Filter implements JdbcRel {
 
@@ -58,6 +67,7 @@ public final class JdbcSideInputFilter extends Filter implements JdbcRel {
       new SqlSpecialOperator(
           "ARRAY_IN",
           SqlKind.OTHER,
+          // precedence 30 matches SqlStdOperatorTable.IN (Calcite 1.41)
           30,
           /* leftAssoc= */ true,
           ReturnTypes.BOOLEAN_NULLABLE,
@@ -116,11 +126,9 @@ public final class JdbcSideInputFilter extends Filter implements JdbcRel {
 
   private static RexNode makeCondition(
       RexBuilder builder, int keyCol, RexDynamicParam param, RelNode input) {
-    RelDataType boolType = builder.getTypeFactory().createSqlType(
-        org.apache.calcite.sql.type.SqlTypeName.BOOLEAN);
+    RelDataType boolType = builder.getTypeFactory().createSqlType(SqlTypeName.BOOLEAN);
     RexInputRef keyRef = RexInputRef.of(keyCol, input.getRowType());
-    return builder.makeCall(boolType, ARRAY_IN_OP,
-        com.google.common.collect.ImmutableList.of(keyRef, param));
+    return builder.makeCall(boolType, ARRAY_IN_OP, ImmutableList.of(keyRef, param));
   }
 
   public int getKeyColumnIndex() {
@@ -134,14 +142,33 @@ public final class JdbcSideInputFilter extends Filter implements JdbcRel {
   /**
    * {@inheritDoc}
    *
-   * <p>The {@code ignoredCondition} argument is intentionally ignored: the condition is always
-   * rebuilt from {@code keyColumnIndex} and {@code arrayParam} so the IN-list semantics are
-   * preserved across planner copies. The incoming {@code traitSet} is preserved as-is so the
-   * JDBC convention supplied by the planner (or by {@link #create}) is retained.
+   * <p>The condition is always rebuilt from {@code keyColumnIndex} and {@code arrayParam} so the
+   * IN-list semantics are preserved across planner copies. The incoming {@code traitSet} is
+   * preserved as-is so the JDBC convention supplied by the planner (or by {@link #create}) is
+   * retained.
+   *
+   * <p>To guard against planner rules (e.g. {@code ReduceExpressionsRule}, predicate simplifiers,
+   * predicate pull-up) that expect a rewritten condition to be honored, this method validates
+   * that {@code condition} is structurally equivalent to the synthesized condition. If it is not,
+   * an {@link IllegalStateException} is thrown so the rewrite surfaces immediately at test/dev
+   * time instead of being silently discarded.
    */
   @Override
-  public JdbcSideInputFilter copy(
-      RelTraitSet traitSet, RelNode input, RexNode ignoredCondition) {
+  public JdbcSideInputFilter copy(RelTraitSet traitSet, RelNode input, RexNode condition) {
+    // Reference equality short-circuits: happens when the planner only changes traits.
+    if (condition != this.getCondition()) {
+      RexNode rebuilt =
+          makeCondition(input.getCluster().getRexBuilder(), keyColumnIndex, arrayParam, input);
+      if (!rebuilt.toString().equals(condition.toString())) {
+        throw new IllegalStateException(
+            "JdbcSideInputFilter.copy called with a non-equivalent condition; this filter's"
+                + " condition is synthesized from (keyColumnIndex, arrayParam) and cannot be"
+                + " externally rewritten. Got: "
+                + condition
+                + ", expected: "
+                + rebuilt);
+      }
+    }
     return new JdbcSideInputFilter(
         input.getCluster(), traitSet, input, keyColumnIndex, arrayParam);
   }
@@ -167,9 +194,13 @@ public final class JdbcSideInputFilter extends Filter implements JdbcRel {
   }
 
   /**
-   * Produce a {@link SqlNode} for this filter in the given {@code dialect}. Used by tests and by
-   * JDBC unparse.
+   * Test-only helper; production unparse goes via {@link #implement(JdbcImplementor)}.
+   *
+   * <p>Produces a {@link SqlNode} for this filter in the given {@code dialect} by running a
+   * standalone {@link RelToSqlConverter}. This is useful for unit tests that want to assert the
+   * rendered SQL string without constructing a full JDBC implementor stack.
    */
+  @VisibleForTesting
   public SqlNode toSqlNode(SqlDialect dialect) {
     RelToSqlConverter conv = new RelToSqlConverter(dialect);
     SqlImplementor.Result result = conv.visitRoot(this);

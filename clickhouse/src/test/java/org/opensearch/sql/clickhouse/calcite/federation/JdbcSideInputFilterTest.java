@@ -81,11 +81,10 @@ public class JdbcSideInputFilterTest {
         new SqlPrettyWriter(
                 SqlPrettyWriter.config().withDialect(ClickHouseSqlDialect.INSTANCE))
             .format(node);
-    // Accept either 'IN (?)' or 'IN ?' — both are unparse variants Calcite may produce.
-    // Also accept SEARCH-based sarg form Calcite 1.41 may emit internally.
-    boolean hasIn =
-        sql.contains("IN (?)") || sql.contains("IN ?") || sql.toUpperCase().contains("SEARCH");
-    assertTrue(hasIn, "Expected 'IN (?)' or 'IN ?' or SEARCH in SQL: " + sql);
+    // ARRAY_IN_OP.unparse must emit the literal 'IN (?)' form: that is the whole point of this
+    // filter (bypass Calcite 1.41's Sarg/SEARCH rewrite of plain IN-lists). If this fails,
+    // investigate the unparse path; do not weaken this assertion.
+    assertTrue(sql.contains("IN (?)"), "expected 'IN (?)' in rendered SQL, got: " + sql);
     assertTrue(
         sql.toLowerCase().contains("user_id"), "Expected user_id ref in SQL: " + sql);
   }
