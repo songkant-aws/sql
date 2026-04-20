@@ -1,0 +1,315 @@
+# ClickHouse `JdbcConvention` expression fix — M5.1
+
+**Date:** 2026-04-20
+**Branch:** `feat/clickhouse-datasource`
+**Scope:** Fix the PLANNING_ERROR that causes all six query-path ClickHouse integration tests to fail during Calcite code-gen. Un-`@Ignore` those tests and show them green end-to-end in binary-mode IT.
+
+## 1. Problem
+
+Running any PPL query that resolves to a ClickHouse table currently fails with:
+
+```
+PLANNING_ERROR: A method named "unwrap" is not declared in any enclosing
+  class nor any supertype, nor through a static import
+  at compile step of the optimized query plan for physical execution
+```
+
+The optimized plan (from `ClickHouseBasicQueryIT#head_returns_rows`):
+
+```
+LogicalSystemLimit(fetch=[10000])
+  LogicalProject(event_id=[$0])
+    LogicalSort(fetch=[3])
+      JdbcTableScan(table=[[ClickHouse, ch_basic, analytics, events]])
+```
+
+When Calcite's `JdbcToEnumerableConverter` code-generates the executor, it emits:
+
+```java
+ResultSetEnumerable.of(
+    (javax.sql.DataSource) "CLICKHOUSE_ch_basic_118959517470781".unwrap(javax.sql.DataSource.class),
+    "SELECT ...",
+    rowBuilderFactory);
+```
+
+— i.e. it calls `.unwrap(DataSource.class)` on the **name** of the convention, because that's what we gave it.
+
+## 2. Root cause
+
+In `clickhouse/src/main/java/org/opensearch/sql/clickhouse/calcite/ClickHouseConvention.java`:
+
+```java
+super(ClickHouseSqlDialect.INSTANCE,
+      new ConstantExpression(String.class, name),   // ← bug
+      name);
+```
+
+The second argument to `JdbcConvention` is declared as `Expression expression` and is documented to be "the expression that will be used to generate the data source at runtime". Stock Calcite (`JdbcSchema.create(SchemaPlus parent, String name, DataSource ds, SqlDialect, catalog, schema)`) builds it with:
+
+```java
+Schemas.subSchemaExpression(parentSchema, name, JdbcSchema.class)
+```
+
+At codegen this becomes `parent.getSubSchema(name).unwrap(JdbcSchema.class)`, and `JdbcToEnumerableConverter` then wraps that in another `.unwrap(DataSource.class)` call. `JdbcSchema` implements `Wrapper` and returns its `DataSource` in `unwrap`.
+
+We pass a bare `ConstantExpression` instead, so codegen generates `"STRING_LITERAL".unwrap(DataSource.class)` — type-illegal Java.
+
+Verified via `javap` on `calcite-core-1.41.0.jar`:
+- `JdbcToEnumerableConverter` loads `JdbcConvention.expression` then calls `Schemas.unwrap(expression, DataSource.class)` → emits `<expr>.unwrap(DataSource.class)`.
+- `JdbcSchema implements Wrapper` with `public <T> T unwrap(Class<T>)`.
+
+## 3. Constraints
+
+1. **Expression must be built lazily.** When `ClickHouseSchemaFactory.build()` runs, the Calcite `SchemaPlus` tree containing our node does not yet exist (we're producing the `Schema` instance Calcite will mount). `Schemas.subSchemaExpression(parent, name, Class)` needs a live `SchemaPlus parent` — we must defer expression construction until after mounting.
+
+2. **Must preserve per-datasource convention identity.** The existing design (one `JdbcConvention` instance per CH datasource, so planner traits don't collide across datasources) is correct; only the `expression` field needs fixing. Convention name + dialect stay as-is.
+
+3. **Must not break the existing schema registration path.** `ClickHouseSchema` is added to root at `FrameworkConfig` build time (`QueryService.buildFrameworkConfig`); `getSubSchemaMap()` is called lazily by Calcite on first query. The per-datasource Schema instance must be valid from first access — we cannot require a second "install" step.
+
+4. **Must cover both Basic and Pushdown ITs.** All six currently-`@Ignore`d tests must pass. Registration ITs stay passing.
+
+5. **Plan-only unit tests must stay green.** `core` module has `ClickHousePlanSmokeTest` / `ClickHouseSchemaTest` that mock the `CalciteSchemaProvider` and do not build a real Calcite framework. The fix must not break tests that never exercise the codegen path.
+
+## 4. Approaches considered
+
+### Option A (chosen): pass `SchemaPlus` down at construction time, build expression via `Schemas.subSchemaExpression`
+
+Thread the per-datasource `SchemaPlus parent` from the place we know it into `ClickHouseConvention.of(...)`, so the convention's expression is:
+
+```java
+Schemas.subSchemaExpression(parentSchema, datasourceName, JdbcSchema.class)
+```
+
+At codegen this evaluates to `rootSchema.getSubSchema("ClickHouse").getSubSchema("ch_basic").unwrap(JdbcSchema.class).getDataSource()` — exactly what stock Calcite does.
+
+The "place we know `SchemaPlus`" is `ClickHouseSchema.getSubSchemaMap()` — but it receives `Map<String,Schema>`, not `Map<String, SchemaPlus>`, so it can't observe the parent plus directly. We solve this by making `ClickHouseSchema` **capture its own `SchemaPlus` from the outside**:
+
+- `QueryService.buildFrameworkConfig` already does `SchemaPlus clickhouseSchemaPlus = rootSchema.add("ClickHouse", new ClickHouseSchema(ds));` — the returned `SchemaPlus` is the reference we need.
+- Register that reference back into `ClickHouseSchema` (via a `setSchemaPlus(SchemaPlus)` call right after `add`, or — cleaner — via `ClickHouseSchema.install(SchemaPlus root)` that both adds itself and captures the returned plus).
+- `getSubSchemaMap()` then passes the plus into each per-datasource schema's construction.
+
+**Pros:** matches the canonical Calcite pattern; no static registry; minimal change surface.
+**Cons:** introduces a small mutable field (`SchemaPlus` reference) on `ClickHouseSchema`; requires a one-line convention at the wiring site.
+
+### Option B (rejected): static DataSource registry + explicit `Expressions.call`
+
+Build the convention expression as `Expressions.call(DATA_SOURCE_REGISTRY, "get", Expressions.constant(name))` where `DATA_SOURCE_REGISTRY` is a `Map<String, DataSource>` keyed by convention name. Each `DataSource` is registered/unregistered alongside schema construction.
+
+**Rejected:** introduces global mutable state, harder to unit-test, diverges from Calcite convention. Only considered as a fallback if Option A hits a SchemaPlus-access issue we cannot resolve.
+
+### Option C (rejected): switch to stock `JdbcSchema.create` and drop per-datasource convention
+
+Use Calcite's own `JdbcSchema.create(parentSchema, ds.name, ds, dialect, catalog, schema)`. This would work but loses per-datasource convention separation (all CH datasources share the default JDBC convention), which would complicate future per-datasource rule/cost customization (M6/M7).
+
+**Rejected:** throws away an intentional design choice from M3.
+
+## 5. Design (Option A — detailed)
+
+### 5.1 `ClickHouseConvention` API change
+
+Current:
+```java
+public static ClickHouseConvention of(String datasourceName) {
+  return new ClickHouseConvention("CLICKHOUSE_" + datasourceName + "_" + System.nanoTime());
+}
+```
+
+New:
+```java
+public static ClickHouseConvention of(String datasourceName, Expression expression) {
+  return new ClickHouseConvention(
+      "CLICKHOUSE_" + datasourceName + "_" + System.nanoTime(),
+      expression);
+}
+```
+
+where the constructor passes `expression` through to `super(dialect, expression, name)`.
+
+### 5.2 `ClickHouseSchemaFactory.build` signature change
+
+Current:
+```java
+public static Schema build(
+    String datasourceName, DataSource dataSource, ClickHouseTableSpec.Schema spec)
+```
+
+New:
+```java
+public static Schema build(
+    SchemaPlus parentSchema,       // ← new
+    String datasourceName,
+    DataSource dataSource,
+    ClickHouseTableSpec.Schema spec)
+```
+
+Inside `build`, the per-datasource convention is now:
+
+```java
+Expression expr = Schemas.subSchemaExpression(parentSchema, datasourceName, JdbcSchema.class);
+ClickHouseConvention convention = ClickHouseConvention.of(datasourceName, expr);
+```
+
+### 5.3 `ClickHouseJdbcSchemaBuilder.build` — use real `JdbcSchema` for sub-schemas
+
+Current: wraps a `JdbcSchema` as `delegate` but returns a bespoke `AbstractSchema`. That means `parentSchema.getSubSchema(datasourceName).unwrap(JdbcSchema.class)` at runtime gets `null` (the bespoke `AbstractSchema` doesn't implement `Wrapper<JdbcSchema>`).
+
+Fix: return a `JdbcSchema` subclass (or configure `JdbcSchema` directly) that holds our pre-validated `JdbcTable` map. Minimum-risk option is a small `AbstractSchema` subclass that overrides `unwrap(Class)`:
+
+```java
+@Override public <T> T unwrap(Class<T> clazz) {
+  if (clazz.isInstance(delegate)) return clazz.cast(delegate);
+  return super.unwrap(clazz);
+}
+```
+
+so `.unwrap(JdbcSchema.class)` returns our `delegate` `JdbcSchema`, which then returns its `DataSource` on `.unwrap(DataSource.class)`.
+
+**Why not just return `delegate` directly?** Because `delegate` enumerates tables from JDBC metadata at access time, bypassing our declared schema (and our type-validation pass). Keeping the `AbstractSchema` wrapper preserves the curated `tables` map; only the `unwrap` chain needs to bridge through.
+
+### 5.4 `CalciteSchemaProvider.asCalciteSchema` signature change
+
+Current:
+```java
+public interface CalciteSchemaProvider {
+  Schema asCalciteSchema(String datasourceName);
+}
+```
+
+New:
+```java
+public interface CalciteSchemaProvider {
+  Schema asCalciteSchema(String datasourceName, SchemaPlus parentSchema);
+}
+```
+
+`ClickHouseStorageEngine.asCalciteSchema` changes accordingly.
+
+### 5.5 `ClickHouseSchema` captures its own `SchemaPlus`
+
+Current:
+```java
+public class ClickHouseSchema extends AbstractSchema {
+  public static final String CLICKHOUSE_SCHEMA_NAME = "ClickHouse";
+  private final DataSourceService dataSourceService;
+
+  @Override protected Map<String, Schema> getSubSchemaMap() { /* ... */ }
+}
+```
+
+New:
+```java
+public class ClickHouseSchema extends AbstractSchema {
+  public static final String CLICKHOUSE_SCHEMA_NAME = "ClickHouse";
+  private final DataSourceService dataSourceService;
+  private volatile SchemaPlus schemaPlus;    // set by install(); read by getSubSchemaMap()
+
+  public static SchemaPlus install(SchemaPlus rootSchema, DataSourceService ds) {
+    ClickHouseSchema node = new ClickHouseSchema(ds);
+    SchemaPlus added = rootSchema.add(CLICKHOUSE_SCHEMA_NAME, node);
+    node.schemaPlus = added;
+    return added;
+  }
+
+  @Override protected Map<String, Schema> getSubSchemaMap() {
+    if (dataSourceService == null || schemaPlus == null) return Map.of();
+    /* ... provider.asCalciteSchema(name, schemaPlus) ... */
+  }
+}
+```
+
+The mutable field is set exactly once, right after `rootSchema.add`, before any query runs. `volatile` covers the happens-before boundary between `buildFrameworkConfig` (main thread) and planning threads.
+
+### 5.6 `QueryService.buildFrameworkConfig` wiring
+
+Current:
+```java
+rootSchema.add(ClickHouseSchema.CLICKHOUSE_SCHEMA_NAME,
+               new ClickHouseSchema(dataSourceService));
+```
+
+New:
+```java
+ClickHouseSchema.install(rootSchema, dataSourceService);
+```
+
+## 6. Test strategy
+
+### 6.1 Unit — `ClickHouseConventionTest` (new, in `clickhouse` module)
+
+Verify the convention's expression resolves through a real `SchemaPlus` tree:
+
+```java
+SchemaPlus root = CalciteSchema.createRootSchema(true, false).plus();
+SchemaPlus ch = root.add("ClickHouse", new AbstractSchema() { ... });
+SchemaPlus sub = ch.add("ds1", ClickHouseJdbcSchemaBuilder.build(...));
+
+Expression expr = Schemas.subSchemaExpression(ch, "ds1", JdbcSchema.class);
+// When compiled+executed against `root`, the expression should resolve to a
+// real DataSource matching the one we registered.
+Object got = Expressions.evaluate(Schemas.unwrap(expr, DataSource.class), ...);
+assertThat(got, instanceOf(DataSource.class));
+assertSame(got, originalDs);
+```
+
+If `Expressions.evaluate` isn't straightforward, assert instead that `ch.getSubSchema("ds1").unwrap(JdbcSchema.class)` is non-null and that its `getDataSource()` matches ours.
+
+### 6.2 Unit — update existing mocks
+
+- `core/src/test/java/org/opensearch/sql/calcite/ClickHouseSchemaTest.java`: update stub to match new `asCalciteSchema(name, parent)` signature.
+- `core/src/test/java/org/opensearch/sql/calcite/ClickHousePlanSmokeTest.java`: same.
+- `clickhouse/src/test/java/org/opensearch/sql/clickhouse/storage/ClickHouseStorageEngineTest.java`: pass a fake `SchemaPlus` (can be `CalciteSchema.createRootSchema(true).plus()`).
+
+### 6.3 Integration — remove `@Ignore`
+
+Un-`@Ignore`:
+- `ClickHouseBasicQueryIT.head_returns_rows`
+- `ClickHouseBasicQueryIT.filter_and_project_end_to_end`
+- `ClickHousePushdownIT.filter_returns_only_matching_rows`
+- `ClickHousePushdownIT.project_drops_unwanted_columns`
+- `ClickHousePushdownIT.sort_and_limit_return_top_n_descending`
+- `ClickHousePushdownIT.explain_shows_jdbc_convention_nodes`
+
+Acceptance: binary-mode IT run
+
+```
+./gradlew :integ-test:integTest -DuseClickhouseBinary=true -DignorePrometheus=true --tests "org.opensearch.sql.clickhouse.*"
+```
+
+reports `tests=9, skipped=0, failures=0, errors=0`, BUILD SUCCESSFUL.
+
+### 6.4 Non-regression
+
+- `./gradlew :core:test :clickhouse:test` stays green.
+- Registration ITs stay green.
+- Gradle spotless stays clean.
+
+## 7. Change surface summary
+
+| File | Kind of change |
+|---|---|
+| `clickhouse/src/main/java/org/opensearch/sql/clickhouse/calcite/ClickHouseConvention.java` | Add `Expression` parameter to `of()` / constructor; drop `ConstantExpression`. |
+| `clickhouse/src/main/java/org/apache/calcite/adapter/jdbc/ClickHouseJdbcSchemaBuilder.java` | Return a wrapper schema that overrides `unwrap(Class)` to expose the inner `JdbcSchema`. |
+| `clickhouse/src/main/java/org/opensearch/sql/clickhouse/storage/ClickHouseSchemaFactory.java` | Accept `SchemaPlus parentSchema`; build convention expression via `Schemas.subSchemaExpression`. |
+| `clickhouse/src/main/java/org/opensearch/sql/clickhouse/storage/ClickHouseStorageEngine.java` | `asCalciteSchema` signature adds `SchemaPlus parentSchema`. |
+| `core/src/main/java/org/opensearch/sql/storage/CalciteSchemaProvider.java` | Interface signature adds `SchemaPlus parentSchema`. |
+| `core/src/main/java/org/opensearch/sql/calcite/ClickHouseSchema.java` | Add `install(SchemaPlus, DataSourceService)` static helper; capture own `SchemaPlus`; thread it into `asCalciteSchema` calls. |
+| `core/src/main/java/org/opensearch/sql/executor/QueryService.java` | Replace `rootSchema.add(...)` with `ClickHouseSchema.install(rootSchema, ds)`. |
+| `core/src/test/java/.../ClickHouseSchemaTest.java` and `ClickHousePlanSmokeTest.java` | Update mocks for new `asCalciteSchema` signature. |
+| `clickhouse/src/test/java/.../ClickHouseStorageEngineTest.java` | Pass a fake `SchemaPlus`. |
+| `clickhouse/src/test/java/.../ClickHouseConventionTest.java` | **New.** Assert convention expression resolves through a live SchemaPlus tree. |
+| `integ-test/src/test/java/org/opensearch/sql/clickhouse/ClickHouseBasicQueryIT.java` | Remove `@Ignore` from 2 tests. |
+| `integ-test/src/test/java/org/opensearch/sql/clickhouse/ClickHousePushdownIT.java` | Remove `@Ignore` from 4 tests. |
+
+## 8. Risks
+
+- **`Schemas.subSchemaExpression` returns an Expression that evaluates through `parentSchema.getSubSchema(name)`** — if at codegen time the CH schema hasn't actually been added under root (e.g., datasource registered after framework config built), the expression resolves to null and we re-fail on `.unwrap(...)`. Mitigation: `ClickHouseSchema.getSubSchemaMap()` is called lazily during planning — datasource visibility at plan time is the same as visibility through `DataSourceService`, which is already handled. Guard: the volatile-null check on `schemaPlus` short-circuits and returns an empty map before a query can reach codegen against a missing parent.
+- **`parentSchema` reference held across queries** — we're keeping a reference to the per-query `SchemaPlus` root in `ClickHouseSchema`. Calcite creates a new root per `FrameworkConfig` build; our `ClickHouseSchema` is also re-created per build (inside `buildFrameworkConfig`), so lifetimes match. Verified by reading `QueryService.buildFrameworkConfig`: both are per-call.
+- **`unwrap(Class)` wrapper subtlety** — overriding `unwrap` on a schema wrapper has to chain to `super.unwrap` for unknown classes; otherwise we accidentally hide Calcite's own unwrap machinery. The design snippet in §5.3 preserves this.
+- **Daemon-state bug already identified in IT harness** — on same daemon, the 2nd `startClickhouse` invocation fails with a `buildProcess` method-missing on the SpawnProcessTask decorator. Orthogonal to this fix; tracked separately.
+
+## 9. Out of scope
+
+- M5 aggregate/fallback rules (separate plan).
+- M5 rate-limit / error handling polish.
+- Pre-existing Gradle daemon `buildProcess`-missing intermittent on repeat `startClickhouse`.
+- Calcite dialect extension (still the M3-era whitelist).
