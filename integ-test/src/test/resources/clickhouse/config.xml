@@ -35,4 +35,9 @@
   <default_database>default</default_database>
   <mark_cache_size>1073741824</mark_cache_size>
   <mlock_executable>false</mlock_executable>
+  <query_log>
+    <database>system</database>
+    <table>query_log</table>
+    <flush_interval_milliseconds>1000</flush_interval_milliseconds>
+  </query_log>
 </clickhouse>
