@@ -10,6 +10,8 @@ import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWriter;
+import org.opensearch.sql.clickhouse.calcite.federation.PplFederationDialect;
+import org.opensearch.sql.clickhouse.calcite.federation.PplFederationDialectRegistry;
 
 public class ClickHouseSqlDialect extends SqlDialect {
   public static final SqlDialect.Context CTX =
@@ -21,6 +23,22 @@ public class ClickHouseSqlDialect extends SqlDialect {
           .withNullCollation(NullCollation.LOW);
 
   public static final ClickHouseSqlDialect INSTANCE = new ClickHouseSqlDialect();
+
+  static {
+    PplFederationDialectRegistry.register(
+        INSTANCE,
+        new PplFederationDialect() {
+          @Override
+          public long getInListPushdownThreshold() {
+            return 10_000L;
+          }
+
+          @Override
+          public boolean supportsArrayInListParam() {
+            return true;
+          }
+        });
+  }
 
   private ClickHouseSqlDialect() {
     super(CTX);
