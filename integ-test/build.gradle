@@ -230,6 +230,16 @@ dependencies {
     // connection against the running CH instance.
     testImplementation 'com.clickhouse:clickhouse-jdbc:0.6.5'
     testImplementation 'org.testcontainers:junit-jupiter:1.19.7'
+    // OpenSearch's build plugin calls setTransitive(false) on all dependency configurations,
+    // so compile-scope transitive deps of testcontainers:1.19.7 and jdbc:1.19.7 must be
+    // declared explicitly or ClickHouseITBase will fail to initialize with
+    // NoClassDefFoundError on Docker or Testcontainers delegate classes.
+    testImplementation 'com.github.docker-java:docker-java-api:3.3.6'
+    testImplementation 'com.github.docker-java:docker-java-transport:3.3.6'
+    testImplementation 'com.github.docker-java:docker-java-transport-zerodep:3.3.6'
+    testImplementation 'org.testcontainers:database-commons:1.19.7'
+    testImplementation 'org.rnorth.duct-tape:duct-tape:1.0.8'
+    testImplementation 'org.apache.commons:commons-compress:1.24.0'
     testCompileOnly 'org.apiguardian:apiguardian-api:1.1.2'
 
     // Needed for BWC tests
@@ -721,6 +731,12 @@ integTest {
     systemProperty 'calcite.debug', 'false'
     systemProperty 'org.codehaus.janino.source_debugging.enable', 'false'
     systemProperty 'org.codehaus.janino.source_debugging.dir', calciteCodegen
+
+    // Disable the Ryuk resource-reaper daemon so the randomized-test runner's strict
+    // thread-leak check (ThreadLeakError) does not flag the testcontainers-ryuk thread
+    // as a leaked thread after each test suite. Testcontainers reads this as an env var
+    // (System.getenv), not as a JVM system property, so environment() is required here.
+    environment 'TESTCONTAINERS_RYUK_DISABLED', 'true'
 
     systemProperty 'tests.security.manager', 'false'
     systemProperty('project.root', project.projectDir.absolutePath)

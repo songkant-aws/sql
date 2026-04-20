@@ -10,8 +10,10 @@ import static org.junit.Assert.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
+import org.junit.After;
 import org.junit.Test;
 
 /**
@@ -24,8 +26,25 @@ import org.junit.Test;
  * path and asserts that path works, recording the capability flag in the output.
  *
  * <p>This test stays in the tree as a regression guard for the IN-list pushdown feature.
+ *
+ * <p>NOTE: This spike lives in {@code integ-test} (not {@code :clickhouse:test}) because the
+ * Testcontainers harness ({@link ClickHouseITBase}) is wired up only in {@code integ-test};
+ * moving it would require restructuring the testcontainer setup, which is out of scope here.
  */
 public class ClickHouseArrayBindSpikeIT extends ClickHouseITBase {
+
+  @After
+  public void teardown() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection conn = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = conn.createStatement()) {
+      st.execute("DROP TABLE IF EXISTS spike_in");
+    } catch (Exception ignored) {
+      // best-effort cleanup
+    }
+  }
 
   @Test
   public void testArrayParamInListBindsAgainstClickHouse() throws Exception {
@@ -59,7 +78,7 @@ public class ClickHouseArrayBindSpikeIT extends ClickHouseITBase {
         }
         supportsArrayInListParam = true;
         chosenPath = "setArray";
-      } catch (Exception e) {
+      } catch (SQLException e) {
         // Driver does not support setArray for IN (?). Fall back to inline literal.
         System.out.println(
             "[spike] setArray path failed ("
@@ -95,6 +114,15 @@ public class ClickHouseArrayBindSpikeIT extends ClickHouseITBase {
           40.0,
           result,
           0.0001);
+
+      // The ClickHouse JDBC driver must support setArray for IN-list binding.
+      // If this assertion fails, the driver has regressed and downstream tasks
+      // relying on the array-param approach must be reconsidered.
+      assertTrue(
+          "ClickHouse JDBC driver must support setArray for IN-list (supportsArrayInListParam"
+              + " must be true); if false, the driver regressed and the array-param approach"
+              + " must be reconsidered",
+          supportsArrayInListParam);
     }
   }
 }

@@ -39,7 +39,11 @@ public abstract class ClickHouseITBase extends PPLIntegTestCase {
           ? new ExternalResource() {
             // no-op: clickhouse lifecycle is managed by gradle's startClickhouse / stopClickhouse
           }
-          : new ClickHouseContainer("clickhouse/clickhouse-server:24.3");
+          : new ClickHouseContainer("clickhouse/clickhouse-server:24.3")
+              .withPassword("test")
+              // clickhouse-jdbc 0.6.5 defaults to LZ4 compression; suppress it so the
+              // internal Testcontainers JDBC health-check does not need LZ4 on the classpath.
+              .withUrlParam("compress", "0");
 
   /**
    * JDBC URL that resolves to the active ClickHouse instance. Always includes {@code compress=0}
