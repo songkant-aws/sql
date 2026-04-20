@@ -4,8 +4,10 @@
   ~ SPDX-License-Identifier: Apache-2.0
   -->
 <!--
-  Minimal users config for integration tests. The `default` user has no password and is
-  allowed from loopback only. Not intended for any non-test deployment.
+  Minimal users config for integration tests. The `default` user uses a fixed
+  password (`test`) because the OpenSearch ClickHouse connector requires a
+  non-blank password for auth.type=basic. Loopback-only. Not intended for any
+  non-test deployment.
 -->
 <clickhouse>
   <profiles>
@@ -13,7 +15,7 @@
   </profiles>
   <users>
     <default>
-      <password></password>
+      <password>test</password>
       <networks>
         <ip>127.0.0.1</ip>
       </networks>

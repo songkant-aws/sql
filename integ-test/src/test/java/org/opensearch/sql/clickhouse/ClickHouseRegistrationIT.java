@@ -84,6 +84,9 @@ public class ClickHouseRegistrationIT extends ClickHouseITBase {
       org.junit.Assert.fail("Expected failure");
     } catch (org.opensearch.client.ResponseException e) {
       String body = new String(e.getResponse().getEntity().getContent().readAllBytes());
+      // Bogus credentials trigger a connect-time failure routed through
+      // ClickHouseConnectionException, whose message contains the pool name
+      // "clickhouse-<hash>". Match on that stable substring.
       assertThat(body.toLowerCase(), containsString("clickhouse"));
     }
   }

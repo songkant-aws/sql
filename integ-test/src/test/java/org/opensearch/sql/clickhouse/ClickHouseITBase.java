@@ -62,7 +62,9 @@ public abstract class ClickHouseITBase extends PPLIntegTestCase {
 
   protected static String chPassword() {
     if ("true".equals(System.getProperty("useClickhouseBinary"))) {
-      return "";
+      // Must match src/test/resources/clickhouse/users.xml. A non-blank password
+      // is required because the connector rejects basic auth with blank password.
+      return "test";
     }
     return ((ClickHouseContainer) CH).getPassword();
   }

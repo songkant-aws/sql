@@ -225,6 +225,10 @@ dependencies {
     testImplementation 'org.testcontainers:testcontainers:1.19.7'
     testImplementation 'org.testcontainers:jdbc:1.19.7'
     testImplementation 'org.testcontainers:clickhouse:1.19.7'
+    // ClickHouse JDBC driver is needed in the test JVM (not just inside the plugin
+    // bundle) so seedClickHouse() / seedAndRegister() can open a direct JDBC
+    // connection against the running CH instance.
+    testImplementation 'com.clickhouse:clickhouse-jdbc:0.6.5'
     testImplementation 'org.testcontainers:junit-jupiter:1.19.7'
     testCompileOnly 'org.apiguardian:apiguardian-api:1.1.2'
 
@@ -391,7 +395,49 @@ def waitForClickhouseReady = { int timeoutSec ->
 task startClickhouse(type: SpawnProcessTask) {
     mustRunAfter ':doctest:doctest'
 
+    // Distinct pid lock file so we don't collide with startPrometheus (both default
+    // to `.pid.lock` in the project root; sharing it causes "Server already running!"
+    // if either task's lock was left behind by a previous run).
+    pidLockFileName = '.clickhouse.pid.lock'
+
     doFirst {
+        // Defensive cleanup: if a previous run crashed or was interrupted before
+        // stopClickhouse ran, the following can leak and wedge subsequent runs:
+        //   - an orphan `clickhouse server` process still holding ports 18123/19000
+        //   - a stale .clickhouse.pid.lock that makes SpawnProcessTask refuse to start
+        //   - a stale /tmp/opensearch-ch-it data dir (handled a few lines below).
+        // We kill any process whose command line matches this config-file path (so we
+        // only target CH instances we launched, not unrelated users' CH servers) and
+        // drop the stale pid lock. We match on the suffix "integ-test/bin/clickhouse/config.xml"
+        // rather than the full absolute path because gradle may resolve $projectDir through
+        // one symlink view (e.g. /workspace/songkant/...) while an earlier run spawned CH
+        // under a different view (e.g. /home/songkant/workspace/...); both resolve to the
+        // same inode but pgrep matches literal command-line strings.
+        def chConfigSuffix = "integ-test/bin/clickhouse/config.xml"
+        try {
+            def proc = ["pgrep", "-f", chConfigSuffix].execute()
+            proc.waitFor()
+            def pids = proc.text.trim().split("\\s+").findAll { it }
+            if (pids) {
+                logger.lifecycle "Killing stale clickhouse pids: ${pids.join(',')}"
+                ["kill", "-TERM", *pids].execute().waitFor()
+                Thread.sleep(1000)
+                // Force-kill any that are still up.
+                def stillUp = ["pgrep", "-f", chConfigSuffix].execute().text.trim()
+                if (stillUp) {
+                    ["kill", "-KILL", *(stillUp.split("\\s+").findAll { it })].execute().waitFor()
+                }
+            }
+        } catch (Exception ignored) {
+            // best-effort; if pgrep is unavailable the Spawn task will still throw
+            // "Server already running!" and surface the issue.
+        }
+        def pidLock = new File(rootDir, pidLockFileName)
+        if (pidLock.exists()) {
+            logger.lifecycle "Removing stale pid lock: ${pidLock}"
+            pidLock.delete()
+        }
+
         File chDir = Paths.get("$projectDir/bin", "clickhouse").toFile()
         File tgz = Paths.get("$projectDir/bin", "clickhouse-${clickhouse_binary_version}.tgz").toFile()
         if (!tgz.exists()) {
@@ -440,6 +486,8 @@ task startClickhouse(type: SpawnProcessTask) {
 
 task stopClickhouse(type: KillProcessTask) {
     onlyIf { useClickhouseBinary }
+    // Must match startClickhouse; KillProcessTask reads this file to kill the pid.
+    pidLockFileName = '.clickhouse.pid.lock'
     doLast {
         // Leave the extracted binary in place for subsequent runs (only ~180 MB); wipe data.
         file("/tmp/opensearch-ch-it").deleteDir()

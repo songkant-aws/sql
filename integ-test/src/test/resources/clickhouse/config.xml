@@ -17,11 +17,18 @@
   <tmp_path>/tmp/opensearch-ch-it/tmp/</tmp_path>
   <user_files_path>/tmp/opensearch-ch-it/user_files/</user_files_path>
   <logger>
-    <level>warning</level>
+    <!-- level=information is required so the `Application:` banner reaches
+         stdout; warning-only suppresses it and SpawnProcessTask's `ready`
+         watcher will block forever. -->
+    <level>information</level>
     <log>/tmp/opensearch-ch-it/clickhouse-server.log</log>
     <errorlog>/tmp/opensearch-ch-it/clickhouse-server.err.log</errorlog>
     <size>100M</size>
     <count>1</count>
+    <!-- Mirror log output to stdout so Gradle's SpawnProcessTask can watch
+         for the `Application:` ready string. Without this, CH writes only
+         to the log file and Gradle hangs waiting for a stdout signal. -->
+    <console>1</console>
   </logger>
   <users_config>users.xml</users_config>
   <default_profile>default</default_profile>

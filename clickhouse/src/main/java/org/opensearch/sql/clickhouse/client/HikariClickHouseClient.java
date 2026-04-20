@@ -20,6 +20,12 @@ public class HikariClickHouseClient implements ClickHouseClient {
 
   public static HikariClickHouseClient create(ClickHouseDataSourceConfig cfg) {
     HikariConfig hc = new HikariConfig();
+    // OpenSearch plugins run under an isolated classloader that does not load
+    // ServiceLoader entries for JDBC drivers, so `DriverManager.getDriver(url)`
+    // returns "No suitable driver" for `jdbc:ch://...`. Setting driverClassName
+    // forces Hikari to Class.forName the driver instead of going through
+    // DriverManager.
+    hc.setDriverClassName("com.clickhouse.jdbc.ClickHouseDriver");
     hc.setJdbcUrl(cfg.getUri());
     hc.setMaximumPoolSize(cfg.getPoolMaxSize());
     hc.setMinimumIdle(cfg.getPoolMinIdle());
