@@ -366,3 +366,86 @@ Enforcement: `OuterWrapper.unwrap` and `WrappingSchema.unwrap` delegate to
    `OuterWrapper.unwrap` contract accordingly.
 3. If the user-facing fallback is needed, see Task 3 in the plan:
    `Programs.sequence(Programs.standard(), Programs.ofRules(JdbcRules.rules(convention)))`.
+
+## Pushdown verification (empirical)
+
+Evidence collected 2026-04-20 after the Wave 6 ITs landed. Ran `ClickHousePushdownIT`
+binary-mode and then queried `system.query_log` on the same ClickHouse instance for
+`QueryFinish` rows whose SQL targets `a.t`. The verbatim SQL below is what CH
+received over the JDBC wire — i.e., what Calcite's `JdbcConvention` actually
+unparsed and sent. Anything Calcite computed above `JdbcToEnumerableConverter`
+never reaches this log.
+
+### CH query_log capture (verbatim)
+
+| # | PPL query | CH SQL (verbatim, wire format) |
+|---|-----------|--------------------------------|
+| 1 | `source=ch_push.a.t \| where id = 42 \| fields id` | ```SELECT `id` FROM `a`.`t` WHERE `id` = 42 LIMIT 10000``` |
+| 2 | `source=ch_push.a.t \| head 1 \| fields id` | ```SELECT * FROM (SELECT `id` FROM `a`.`t` LIMIT 1) AS `t1` LIMIT 10000``` |
+| 3 | `source=ch_push.a.t \| sort - id \| head 3 \| fields id` | ```SELECT * FROM (SELECT `id` FROM `a`.`t` ORDER BY `id` DESC LIMIT 3) AS `t1` ORDER BY `id` DESC LIMIT 10000``` |
+
+The outer `LIMIT 10000` on every statement is Calcite's `LogicalSystemLimit` —
+the PPL engine's safety cap on an un-bounded `source`. It rides through JDBC as
+an outer `JdbcSort(fetch=[10000])`; that is expected and not a bug.
+
+### Per-operator pushdown verdict
+
+| Operator | Query | Evidence in CH SQL | Verdict |
+|----------|-------|--------------------|---------|
+| Filter | `\| where id = 42` | `WHERE `id` = 42` present in SELECT sent to CH | **Pushed** |
+| Projection | `\| fields id` (rows 1 and 2) | CH receives `SELECT `id`` with no `v` column | **Pushed** |
+| Limit (`\| head N`) | `\| head 1` / `\| head 3` | CH receives `LIMIT 1` / `LIMIT 3` inside the inner SELECT | **Pushed** |
+| Sort | `\| sort - id` | CH receives `ORDER BY `id` DESC` inside the inner SELECT | **Pushed** |
+
+All three operators (filter, project, sort+limit) round-trip to ClickHouse.
+Calcite is not computing them above the JDBC boundary.
+
+### EXPLAIN physical plan (corroborating)
+
+The PPL `_explain` endpoint emits Calcite's physical plan as a string. The
+`Jdbc*` class names confirm, node-by-node, that each operator is part of the
+JDBC sub-plan (below `JdbcToEnumerableConverter`):
+
+```
+# | where id > 10
+physical:
+  JdbcToEnumerableConverter
+    JdbcSort(fetch=[10000])
+      JdbcFilter(condition=[>($0, 10)])
+        JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
+
+# | fields id
+physical:
+  JdbcToEnumerableConverter
+    JdbcSort(fetch=[10000])
+      JdbcProject(id=[$0])
+        JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
+
+# | sort - id | head 3
+physical:
+  JdbcToEnumerableConverter
+    JdbcSort(sort0=[$0], dir0=[DESC-nulls-last], fetch=[10000])
+      JdbcSort(sort0=[$0], dir0=[DESC-nulls-last], fetch=[3])
+        JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
+```
+
+No `EnumerableFilter`, `EnumerableProject`, or `EnumerableSort` appears inside
+any plan — the only Enumerable node is the converter at the root, which is
+structural.
+
+### IT pins (permanent regression coverage)
+
+The following IT methods assert these guarantees so any regression in JDBC-rule
+registration or dialect unparsing trips red:
+
+- `ClickHousePushdownIT.explain_shows_jdbc_convention_nodes` —
+  asserts `JdbcToEnumerableConverter`, `JdbcTableScan`, `JdbcFilter` on
+  `| where id > 10`.
+- `ClickHousePushdownIT.explain_project_ridden_as_jdbc_project` —
+  asserts `JdbcProject` on `| fields id`.
+- `ClickHousePushdownIT.explain_sort_and_limit_ridden_as_jdbc_sort` —
+  asserts `JdbcSort`, `DESC`, `fetch=[3]` on `| sort - id | head 3`.
+- `ClickHousePushdownIT.query_log_confirms_filter_project_sort_pushdown` —
+  runs each PPL query, queries `system.query_log`, asserts the CH-side
+  SQL contains `WHERE`, `ORDER BY ... DESC`, `LIMIT N`, and that `v` is
+  never selected when `| fields id` is in the pipeline.
