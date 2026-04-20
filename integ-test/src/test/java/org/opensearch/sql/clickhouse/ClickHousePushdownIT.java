@@ -151,9 +151,10 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
 
     // Strong per-operator asserts on the physical plan.
     assertThat(
-        "explain must cross the JDBC→Enumerable boundary", body, containsString("JdbcToEnumerableConverter"));
-    assertThat(
-        "explain must include a JdbcTableScan leaf", body, containsString("JdbcTableScan"));
+        "explain must cross the JDBC→Enumerable boundary",
+        body,
+        containsString("JdbcToEnumerableConverter"));
+    assertThat("explain must include a JdbcTableScan leaf", body, containsString("JdbcTableScan"));
     assertThat(
         "filter condition must ride into JDBC subtree as JdbcFilter",
         body,
@@ -167,9 +168,7 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
     assertThat(body, containsString("JdbcToEnumerableConverter"));
     assertThat(body, containsString("JdbcTableScan"));
     assertThat(
-        "project must ride into JDBC subtree as JdbcProject",
-        body,
-        containsString("JdbcProject"));
+        "project must ride into JDBC subtree as JdbcProject", body, containsString("JdbcProject"));
   }
 
   @Test
@@ -183,9 +182,7 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
         body,
         containsString("JdbcSort"));
     assertThat(
-        "sort direction must be preserved into the JDBC subtree",
-        body,
-        containsString("DESC"));
+        "sort direction must be preserved into the JDBC subtree", body, containsString("DESC"));
     assertThat(
         "limit (head N) must be preserved as fetch on the JDBC subtree",
         body,
@@ -248,9 +245,7 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
     // Filter query: WHERE predicate must be inside the SQL sent to CH.
     String filterSql = findMatching(observed, "WHERE");
     assertThat(
-        "filter predicate must be pushed into the CH SQL",
-        filterSql,
-        containsString("WHERE"));
+        "filter predicate must be pushed into the CH SQL", filterSql, containsString("WHERE"));
     assertThat(filterSql, containsString("`id`"));
     assertThat(filterSql, containsString("= 42"));
     // And only the projected column is selected (no `v`).
@@ -277,6 +272,205 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
         "projection must strip `v` even when combined with head/LIMIT",
         projectSql.toLowerCase(),
         org.hamcrest.Matchers.not(containsString("`v`")));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aggregation pushdown — count / avg / sum / min / max, with and without
+  // `by` grouping. Same two-prong verification as filter/project/sort above:
+  //   (a) EXPLAIN shows JdbcAggregate inside the JDBC sub-plan (not
+  //       EnumerableAggregate above JdbcToEnumerableConverter).
+  //   (b) system.query_log shows the actual aggregate SQL that crossed the
+  //       JDBC wire to ClickHouse.
+  //
+  // Empirically (Wave 7, 2026-04-20), Calcite does NOT decompose AVG into
+  // SUM/COUNT over JDBC — a native `AVG(...)` call is emitted through the
+  // ClickHouse dialect, so the observed JdbcAggregate row-type lists AVG
+  // verbatim and ClickHouse computes it server-side.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void explain_global_aggregation_ridden_as_jdbc_aggregate() throws Exception {
+    String body =
+        explainBody(
+            "source = "
+                + DS_NAME
+                + ".a.t | stats count() as c, avg(v) as av, sum(v) as sv,"
+                + " min(v) as mn, max(v) as mx");
+    System.out.println("=== EXPLAIN (global stats) ===\n" + body + "\n=== END EXPLAIN ===");
+    assertThat(body, containsString("JdbcToEnumerableConverter"));
+    assertThat(body, containsString("JdbcTableScan"));
+    assertThat(
+        "global aggregation must ride into JDBC subtree as JdbcAggregate with empty group",
+        body,
+        containsString("JdbcAggregate(group=[{}]"));
+    // All five aggregate functions must land on the JdbcAggregate node —
+    // none is evaluated above the JDBC boundary.
+    assertThat("COUNT must push", body, containsString("COUNT()"));
+    assertThat("AVG must push verbatim, not be split into SUM/COUNT", body, containsString("AVG("));
+    assertThat("SUM must push", body, containsString("SUM("));
+    assertThat("MIN must push", body, containsString("MIN("));
+    assertThat("MAX must push", body, containsString("MAX("));
+    assertThat(
+        "no EnumerableAggregate should appear — aggregation must not stay above JDBC",
+        body,
+        org.hamcrest.Matchers.not(containsString("EnumerableAggregate")));
+  }
+
+  @Test
+  public void explain_group_by_aggregation_ridden_as_jdbc_aggregate() throws Exception {
+    String body = explainBody("source = " + DS_NAME + ".a.t | stats avg(v) as av by id");
+    System.out.println("=== EXPLAIN (stats by id) ===\n" + body + "\n=== END EXPLAIN ===");
+    assertThat(body, containsString("JdbcToEnumerableConverter"));
+    assertThat(body, containsString("JdbcTableScan"));
+    // group=[{0}] pins that column #0 (id) is the group key on the JDBC side.
+    assertThat(
+        "group-by aggregation must ride into JDBC subtree as JdbcAggregate(group=[{0}])",
+        body, containsString("JdbcAggregate(group=[{0}]"));
+    assertThat("AVG must appear on the JdbcAggregate row-type", body, containsString("AVG("));
+    assertThat(
+        "no EnumerableAggregate should appear when grouping by a raw column",
+        body,
+        org.hamcrest.Matchers.not(containsString("EnumerableAggregate")));
+  }
+
+  @Test
+  public void explain_filter_plus_aggregation_ridden_as_jdbc_aggregate_over_jdbc_filter()
+      throws Exception {
+    String body = explainBody("source = " + DS_NAME + ".a.t | where id > 50 | stats count() as c");
+    System.out.println(
+        "=== EXPLAIN (where id>50 | stats count) ===\n" + body + "\n=== END EXPLAIN ===");
+    assertThat(body, containsString("JdbcToEnumerableConverter"));
+    assertThat(body, containsString("JdbcTableScan"));
+    assertThat(
+        "aggregate must ride into JDBC subtree as JdbcAggregate(group=[{}])",
+        body,
+        containsString("JdbcAggregate(group=[{}]"));
+    assertThat(
+        "filter must ride into JDBC subtree as JdbcFilter below JdbcAggregate",
+        body,
+        containsString("JdbcFilter(condition=[>($0, 50)])"));
+  }
+
+  @Test
+  public void global_aggregation_returns_correct_row() throws Exception {
+    JSONObject j =
+        executeQuery(
+            "source = "
+                + DS_NAME
+                + ".a.t | stats count() as c, avg(v) as av, sum(v) as sv,"
+                + " min(v) as mn, max(v) as mx");
+    assertThat(j.getJSONArray("datarows").length(), equalTo(1));
+    org.json.JSONArray row = j.getJSONArray("datarows").getJSONArray(0);
+    // Seeded: id in 1..100, v = id * 1.5
+    //   count = 100
+    //   avg(v)   = avg(1.5..150) = 75.75
+    //   sum(v)   = 1.5 * (1+..+100) = 1.5 * 5050 = 7575.0
+    //   min(v)   = 1.5
+    //   max(v)   = 150.0
+    assertThat("count", row.getLong(0), equalTo(100L));
+    assertThat("avg(v)", row.getDouble(1), equalTo(75.75));
+    assertThat("sum(v)", row.getDouble(2), equalTo(7575.0));
+    assertThat("min(v)", row.getDouble(3), equalTo(1.5));
+    assertThat("max(v)", row.getDouble(4), equalTo(150.0));
+  }
+
+  @Test
+  public void group_by_aggregation_returns_one_row_per_group() throws Exception {
+    JSONObject j = executeQuery("source = " + DS_NAME + ".a.t | stats avg(v) as av by id");
+    // 100 distinct ids, each with a single value → 100 rows.
+    assertThat(
+        "| stats avg(v) by id must return one row per distinct id",
+        j.getJSONArray("datarows").length(),
+        equalTo(100));
+  }
+
+  @Test
+  public void query_log_confirms_aggregation_pushdown() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    }
+
+    // 1) global aggregation (no GROUP BY)
+    executeQuery(
+        "source = "
+            + DS_NAME
+            + ".a.t | stats count() as c, avg(v) as av, sum(v) as sv,"
+            + " min(v) as mn, max(v) as mx");
+    // 2) aggregation with GROUP BY
+    executeQuery("source = " + DS_NAME + ".a.t | stats avg(v) as av by id");
+    // 3) filter + aggregation
+    executeQuery("source = " + DS_NAME + ".a.t | where id > 50 | stats count() as c");
+
+    List<String> observed = new ArrayList<>();
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
+      try (ResultSet rs =
+          st.executeQuery(
+              "SELECT query FROM system.query_log "
+                  + "WHERE type = 'QueryFinish' "
+                  + "  AND query LIKE '%FROM %`a`.`t`%' "
+                  + "  AND query NOT LIKE '%system.query_log%' "
+                  + "ORDER BY event_time ASC")) {
+        while (rs.next()) {
+          observed.add(rs.getString(1));
+        }
+      }
+    }
+
+    StringBuilder dump = new StringBuilder("=== CH query_log (aggregation pushdown) ===\n");
+    for (int i = 0; i < observed.size(); i++) {
+      dump.append("[CH SQL ").append(i).append("]\n").append(observed.get(i)).append("\n");
+    }
+    dump.append("=== END query_log (").append(observed.size()).append(" rows) ===");
+    System.out.println(dump);
+
+    assertThat(
+        "expected three pushed-down aggregations (global, group-by, filter+count)",
+        observed.size(),
+        greaterThanOrEqualTo(3));
+
+    // (1) Global aggregation: CH-side SQL must contain all five aggregate calls
+    //     in a single SELECT with no GROUP BY. Crucially, AVG must appear as
+    //     AVG(`v`) — not as a SUM/COUNT pair — so ClickHouse computes it
+    //     server-side (no above-JDBC reduction). We anchor on MIN(`v`) because
+    //     it only appears in the global-stats SQL, not in the group-by or
+    //     filter+count SQLs.
+    String globalSql = findMatching(observed, "MIN(`v`)");
+    assertThat(globalSql, containsString("COUNT("));
+    assertThat(
+        "AVG must push verbatim to CH, not be split into SUM/COUNT above JDBC",
+        globalSql,
+        containsString("AVG(`v`)"));
+    assertThat(globalSql, containsString("SUM(`v`)"));
+    assertThat(globalSql, containsString("MIN(`v`)"));
+    assertThat(globalSql, containsString("MAX(`v`)"));
+    assertThat(
+        "global aggregation has no GROUP BY clause",
+        globalSql,
+        org.hamcrest.Matchers.not(containsString("GROUP BY")));
+
+    // (2) Group-by aggregation: GROUP BY `id` + AVG(`v`) in the projection.
+    String groupBySql = findMatching(observed, "GROUP BY");
+    assertThat(groupBySql, containsString("GROUP BY `id`"));
+    assertThat(
+        "aggregate over grouped rows must push as AVG(`v`)",
+        groupBySql,
+        containsString("AVG(`v`)"));
+
+    // (3) Filter + count: WHERE id > 50 and COUNT(*) in a single SELECT.
+    String filterCountSql = findMatching(observed, "WHERE");
+    assertThat(filterCountSql, containsString("WHERE"));
+    assertThat(filterCountSql, containsString("`id` > 50"));
+    assertThat(filterCountSql, containsString("COUNT("));
+    assertThat(
+        "filter + count must collapse into a single SELECT — no outer wrapping aggregate",
+        filterCountSql,
+        org.hamcrest.Matchers.not(containsString("GROUP BY")));
   }
 
   // --- helpers ---------------------------------------------------------------
