@@ -383,6 +383,9 @@ never reaches this log.
 | 1 | `source=ch_push.a.t \| where id = 42 \| fields id` | ```SELECT `id` FROM `a`.`t` WHERE `id` = 42 LIMIT 10000``` |
 | 2 | `source=ch_push.a.t \| head 1 \| fields id` | ```SELECT * FROM (SELECT `id` FROM `a`.`t` LIMIT 1) AS `t1` LIMIT 10000``` |
 | 3 | `source=ch_push.a.t \| sort - id \| head 3 \| fields id` | ```SELECT * FROM (SELECT `id` FROM `a`.`t` ORDER BY `id` DESC LIMIT 3) AS `t1` ORDER BY `id` DESC LIMIT 10000``` |
+| 4 | `source=ch_push.a.t \| stats count() as c, avg(v) as av, sum(v) as sv, min(v) as mn, max(v) as mx` | ```SELECT COUNT(*) AS `c`, AVG(`v`) AS `av`, SUM(`v`) AS `sv`, MIN(`v`) AS `mn`, MAX(`v`) AS `mx` FROM `a`.`t` LIMIT 10000``` |
+| 5 | `source=ch_push.a.t \| stats avg(v) as av by id` | ```SELECT AVG(`v`) AS `av`, `id` FROM `a`.`t` GROUP BY `id` LIMIT 10000``` |
+| 6 | `source=ch_push.a.t \| where id > 50 \| stats count() as c` | ```SELECT COUNT(*) AS `c` FROM `a`.`t` WHERE `id` > 50 LIMIT 10000``` |
 
 The outer `LIMIT 10000` on every statement is Calcite's `LogicalSystemLimit` —
 the PPL engine's safety cap on an un-bounded `source`. It rides through JDBC as
@@ -390,15 +393,33 @@ an outer `JdbcSort(fetch=[10000])`; that is expected and not a bug.
 
 ### Per-operator pushdown verdict
 
-| Operator | Query | Evidence in CH SQL | Verdict |
-|----------|-------|--------------------|---------|
-| Filter | `\| where id = 42` | `WHERE `id` = 42` present in SELECT sent to CH | **Pushed** |
-| Projection | `\| fields id` (rows 1 and 2) | CH receives `SELECT `id`` with no `v` column | **Pushed** |
-| Limit (`\| head N`) | `\| head 1` / `\| head 3` | CH receives `LIMIT 1` / `LIMIT 3` inside the inner SELECT | **Pushed** |
-| Sort | `\| sort - id` | CH receives `ORDER BY `id` DESC` inside the inner SELECT | **Pushed** |
+| Operator | Query | Evidence in CH SQL | Jdbc\* plan | Verdict |
+|----------|-------|--------------------|-------------|---------|
+| Filter | `\| where id = 42` | `WHERE `id` = 42` present in SELECT sent to CH | `JdbcFilter` | **Pushed** |
+| Projection | `\| fields id` (rows 1 and 2) | CH receives `SELECT `id`` with no `v` column | `JdbcProject` | **Pushed** |
+| Limit (`\| head N`) | `\| head 1` / `\| head 3` | CH receives `LIMIT 1` / `LIMIT 3` inside the inner SELECT | `JdbcSort(fetch=[N])` | **Pushed** |
+| Sort | `\| sort - id` | CH receives `ORDER BY `id` DESC` inside the inner SELECT | `JdbcSort(sort0=[$0], dir0=[DESC-nulls-last])` | **Pushed** |
+| Global `count()` | row 4 | `COUNT(*)` in the SELECT sent to CH | `JdbcAggregate(group=[{}], c=[COUNT()])` | **Pushed** |
+| Global `avg(v)` | row 4 | `AVG(`v`)` in the SELECT sent to CH (not split into SUM/COUNT) | `JdbcAggregate(... av=[AVG($1)])` | **Pushed** |
+| Global `sum(v)` | row 4 | `SUM(`v`)` in the SELECT sent to CH | `JdbcAggregate(... sv=[SUM($1)])` | **Pushed** |
+| Global `min(v)` | row 4 | `MIN(`v`)` in the SELECT sent to CH | `JdbcAggregate(... mn=[MIN($1)])` | **Pushed** |
+| Global `max(v)` | row 4 | `MAX(`v`)` in the SELECT sent to CH | `JdbcAggregate(... mx=[MAX($1)])` | **Pushed** |
+| Group-by (`stats avg by id`) | row 5 | `GROUP BY `id`` + `AVG(`v`)` in one SELECT | `JdbcAggregate(group=[{0}], av=[AVG($1)])` | **Pushed** |
+| Filter + `count()` | row 6 | `WHERE `id` > 50` + `COUNT(*)` in a single SELECT | `JdbcAggregate(group=[{}], c=[COUNT()])` over `JdbcFilter(condition=[>($0, 50)])` | **Pushed (both)** |
 
-All three operators (filter, project, sort+limit) round-trip to ClickHouse.
-Calcite is not computing them above the JDBC boundary.
+All operators tested (filter, project, sort+limit, and every aggregation form
+including group-by and filter+aggregate) round-trip to ClickHouse. Calcite is
+not computing them above the JDBC boundary.
+
+**Surprise worth pinning**: Calcite does **not** decompose `AVG` into `SUM/COUNT`
+over the JDBC boundary for the ClickHouse dialect. The logical plan lists
+`AVG($0)` and the physical plan keeps it as `JdbcAggregate(... av=[AVG($1)])`,
+and the JDBC unparser emits a literal `AVG(`v`)` to ClickHouse — CH then
+computes the average natively. The
+`ClickHousePushdownIT.query_log_confirms_aggregation_pushdown` test pins this
+with an explicit `containsString("AVG(`v`)")` assertion so any future Calcite
+upgrade that flips to a SUM/COUNT split will trip red and force a conscious
+decision.
 
 ### EXPLAIN physical plan (corroborating)
 
@@ -427,11 +448,34 @@ physical:
     JdbcSort(sort0=[$0], dir0=[DESC-nulls-last], fetch=[10000])
       JdbcSort(sort0=[$0], dir0=[DESC-nulls-last], fetch=[3])
         JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
+
+# | stats count() as c, avg(v) as av, sum(v) as sv, min(v) as mn, max(v) as mx
+physical:
+  JdbcToEnumerableConverter
+    JdbcSort(fetch=[10000])
+      JdbcAggregate(group=[{}], c=[COUNT()], av=[AVG($1)], sv=[SUM($1)], mn=[MIN($1)], mx=[MAX($1)])
+        JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
+
+# | stats avg(v) as av by id
+physical:
+  JdbcToEnumerableConverter
+    JdbcSort(fetch=[10000])
+      JdbcProject(av=[$1], id=[$0])
+        JdbcAggregate(group=[{0}], av=[AVG($1)])
+          JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
+
+# | where id > 50 | stats count() as c
+physical:
+  JdbcToEnumerableConverter
+    JdbcSort(fetch=[10000])
+      JdbcAggregate(group=[{}], c=[COUNT()])
+        JdbcFilter(condition=[>($0, 50)])
+          JdbcTableScan(table=[[ClickHouse, ch_push, a, t]])
 ```
 
-No `EnumerableFilter`, `EnumerableProject`, or `EnumerableSort` appears inside
-any plan — the only Enumerable node is the converter at the root, which is
-structural.
+No `EnumerableFilter`, `EnumerableProject`, `EnumerableSort`, or
+`EnumerableAggregate` appears inside any plan — the only Enumerable node is
+the converter at the root, which is structural.
 
 ### IT pins (permanent regression coverage)
 
@@ -449,3 +493,23 @@ registration or dialect unparsing trips red:
   runs each PPL query, queries `system.query_log`, asserts the CH-side
   SQL contains `WHERE`, `ORDER BY ... DESC`, `LIMIT N`, and that `v` is
   never selected when `| fields id` is in the pipeline.
+- `ClickHousePushdownIT.explain_global_aggregation_ridden_as_jdbc_aggregate` —
+  asserts `JdbcAggregate(group=[{}]` with `COUNT()`, `AVG(`, `SUM(`, `MIN(`,
+  `MAX(` all on the JDBC side and no `EnumerableAggregate` anywhere, on
+  `| stats count() as c, avg(v) as av, sum(v) as sv, min(v) as mn, max(v) as mx`.
+- `ClickHousePushdownIT.explain_group_by_aggregation_ridden_as_jdbc_aggregate` —
+  asserts `JdbcAggregate(group=[{0}]` on `| stats avg(v) by id`, pinning that
+  column-0 (`id`) is the group key below the JDBC boundary.
+- `ClickHousePushdownIT.explain_filter_plus_aggregation_ridden_as_jdbc_aggregate_over_jdbc_filter` —
+  asserts `JdbcAggregate(group=[{}]` above `JdbcFilter(condition=[>($0, 50)])`
+  on `| where id > 50 | stats count() as c`.
+- `ClickHousePushdownIT.global_aggregation_returns_correct_row` —
+  asserts count=100, avg=75.75, sum=7575.0, min=1.5, max=150.0 on the seeded
+  1..100 / `id*1.5` dataset, so numerical correctness is pinned end-to-end.
+- `ClickHousePushdownIT.group_by_aggregation_returns_one_row_per_group` —
+  asserts 100 rows returned (one per distinct `id`).
+- `ClickHousePushdownIT.query_log_confirms_aggregation_pushdown` —
+  runs the three aggregation PPL queries, queries `system.query_log`, asserts
+  the CH-side SQL contains `AVG(`v`)` (not a SUM/COUNT split), `GROUP BY `id``
+  for the group-by form, and a single `WHERE `id` > 50 ... COUNT(*)` SELECT
+  for the filter+count form.
