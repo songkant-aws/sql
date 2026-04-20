@@ -392,6 +392,34 @@ def waitForClickhouseReady = { int timeoutSec ->
     throw new GradleException("ClickHouse did not become ready within ${timeoutSec}s")
 }
 
+// Returns true if we can open a TCP socket to localhost:<port>. Used as a preflight
+// check so a conflict (18123/19000 held by an unrelated process) fails fast with a
+// clear message instead of silently waiting 60s on the readiness probe.
+def portInUse = { int port ->
+    try {
+        new Socket('127.0.0.1', port).withCloseable { /* open → in use */ }
+        return true
+    } catch (Exception ignored) {
+        return false
+    }
+}
+
+// Polls `kill -0 <pid>` until the process is gone or the deadline elapses. Returns
+// true when the pid has exited. Used after `kill -TERM` so stopClickhouse gives
+// MergeTree time to flush without blocking the build on a fixed sleep; the old
+// unconditional `Thread.sleep(500)` was too short for CH's shutdown path under load.
+def waitForExit = { String pid, int timeoutMs ->
+    def deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        def rc = ['kill', '-0', pid].execute().waitFor()
+        if (rc != 0) {
+            return true
+        }
+        Thread.sleep(100)
+    }
+    return false
+}
+
 // Gradle 9.2 compat: the old `com.wiredforcode.spawn` plugin broke on 9.2 with
 // "Could not find method buildProcess()" inside SpawnProcessTask#exec. It's abandoned upstream,
 // so we replace startClickhouse/stopClickhouse with plain Gradle tasks that fork the CH binary
@@ -441,6 +469,20 @@ task startClickhouse {
         if (chPidFile.exists()) {
             logger.lifecycle "Removing stale pid file: ${chPidFile}"
             chPidFile.delete()
+        }
+
+        // Preflight port check: after our own defensive pgrep cleanup above, any remaining
+        // bind on 18123/19000 must belong to an unrelated process. Fail fast with a clear
+        // message rather than silently waiting 60s on the /ping readiness probe and
+        // confusing the user with a timeout error.
+        [18123, 19000].each { int port ->
+            if (portInUse(port)) {
+                throw new GradleException(
+                    "Port ${port} is already in use by a non-ClickHouse process (our own " +
+                    "stale CH instances were just cleaned up). Stop whatever is holding " +
+                    "${port} before running :integ-test:integTest with -DuseClickhouseBinary=true."
+                )
+            }
         }
 
         File chDir = Paths.get("$projectDir/bin", "clickhouse").toFile()
@@ -516,12 +558,11 @@ task stopClickhouse {
             if (pid) {
                 try {
                     ["kill", "-TERM", pid].execute().waitFor()
-                    // Give CH a moment to flush data and exit cleanly.
-                    Thread.sleep(500)
-                    // Force-kill if still running.
-                    def stillUp = ["kill", "-0", pid].execute()
-                    stillUp.waitFor()
-                    if (stillUp.exitValue() == 0) {
+                    // Poll for exit up to 5s: MergeTree needs time to flush parts on SIGTERM,
+                    // and a fixed sleep(500) was too short under load (flaky leaks into the
+                    // next run). If the process is still up at the deadline, SIGKILL it.
+                    if (!waitForExit(pid, 5000)) {
+                        logger.lifecycle "stopClickhouse: pid ${pid} did not exit in 5s, sending SIGKILL"
                         ["kill", "-KILL", pid].execute().waitFor()
                     }
                 } catch (Exception e) {
