@@ -473,6 +473,120 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
         org.hamcrest.Matchers.not(containsString("GROUP BY")));
   }
 
+  // ---------------------------------------------------------------------------
+  // Tier-1 whitelist pushdown — math / window / statistical aggregate.
+  //
+  // These tests rely on system.query_log to confirm that the CH-native SQL
+  // actually contains the pushed-down operator (ROUND/ABS, OVER, STDDEV_POP/
+  // VAR_SAMP) rather than a Calcite-side fallback.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void query_log_confirms_tier1_math_pushdown() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    }
+
+    executeQuery(
+        "source = " + DS_NAME + ".a.t | eval r = round(v, 1) | fields id, r | head 1");
+    executeQuery(
+        "source = " + DS_NAME + ".a.t | where abs(id) > 50 | stats count() as c");
+
+    List<String> observed = new ArrayList<>();
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
+      try (ResultSet rs = st.executeQuery(
+          "SELECT query FROM system.query_log "
+              + "WHERE type = 'QueryFinish' "
+              + "  AND query LIKE '%FROM %`a`.`t`%' "
+              + "  AND query NOT LIKE '%system.query_log%' "
+              + "ORDER BY event_time ASC")) {
+        while (rs.next()) observed.add(rs.getString(1));
+      }
+    }
+
+    assertThat("expected both math queries in CH log",
+        observed.size(), greaterThanOrEqualTo(2));
+    String roundSql = findMatching(observed, "ROUND");
+    assertThat("ROUND must be pushed into CH SQL", roundSql, containsString("ROUND"));
+    String absSql = findMatching(observed, "ABS");
+    assertThat("ABS must be pushed into CH SQL", absSql, containsString("ABS"));
+  }
+
+  @Test
+  public void query_log_confirms_tier1_window_pushdown() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    }
+
+    // `eventstats` naturally lowers to Project(RexOver(ROW_NUMBER/RANK/...)) over the CH table.
+    executeQuery(
+        "source = " + DS_NAME + ".a.t | eventstats count() as total | head 3");
+
+    List<String> observed = new ArrayList<>();
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
+      try (ResultSet rs = st.executeQuery(
+          "SELECT query FROM system.query_log "
+              + "WHERE type = 'QueryFinish' "
+              + "  AND query LIKE '%FROM %`a`.`t`%' "
+              + "  AND query NOT LIKE '%system.query_log%' "
+              + "ORDER BY event_time ASC")) {
+        while (rs.next()) observed.add(rs.getString(1));
+      }
+    }
+
+    assertThat("expected at least one CH log entry for eventstats",
+        observed.size(), greaterThanOrEqualTo(1));
+    String windowSql = findMatching(observed, "OVER");
+    assertThat("window function must push as OVER clause to CH",
+        windowSql, containsString(" OVER "));
+  }
+
+  @Test
+  public void query_log_confirms_tier1_stddev_pushdown() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    }
+
+    executeQuery(
+        "source = " + DS_NAME + ".a.t | stats stddev_pop(v) as sd, var_samp(v) as vs");
+
+    List<String> observed = new ArrayList<>();
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
+      try (ResultSet rs = st.executeQuery(
+          "SELECT query FROM system.query_log "
+              + "WHERE type = 'QueryFinish' "
+              + "  AND query LIKE '%FROM %`a`.`t`%' "
+              + "  AND query NOT LIKE '%system.query_log%' "
+              + "ORDER BY event_time ASC")) {
+        while (rs.next()) observed.add(rs.getString(1));
+      }
+    }
+
+    assertThat(observed.size(), greaterThanOrEqualTo(1));
+    String stddevSql = findMatching(observed, "STDDEV_POP");
+    assertThat(stddevSql, containsString("STDDEV_POP"));
+    String varSampSql = findMatching(observed, "VAR_SAMP");
+    assertThat(varSampSql, containsString("VAR_SAMP"));
+  }
+
   // --- helpers ---------------------------------------------------------------
 
   private String explainBody(String ppl) throws Exception {
