@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.junit.Assert.assertFalse;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -45,6 +46,7 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
 
   private static final String DS_NAME = "ch";
   private static final String OS_INDEX = "fed_docs";
+  private static final String OS_INDEX_LARGE = "fed_docs_large";
   private static final String CH_DATABASE = "fed";
   private static final String CH_TABLE = "fed_events";
 
@@ -68,6 +70,11 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
       client().performRequest(new Request("DELETE", "/" + OS_INDEX));
     } catch (Exception ignored) {
       // best-effort cleanup
+    }
+    try {
+      client().performRequest(new Request("DELETE", "/" + OS_INDEX_LARGE));
+    } catch (Exception ignored) {
+      // best-effort cleanup — only the bailout test creates this index
     }
   }
 
@@ -259,6 +266,115 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
         "IN-list pushdown must land at CH as IN (?), IN (<keys>), or IN ([<keys>])",
         hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
         equalTo(true));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bailout: when the bounded left (head 15000) exceeds the ClickHouse dialect's
+  // IN-list threshold (10000 — see ClickHouseSqlDialect), the federation rule must
+  // no-op rather than push down a monstrously-sized IN-list. The CH query_log
+  // should therefore carry the full-scan + aggregation SQL with NO IN-list
+  // pushdown on user_id — proving the rule correctly degrades to the non-pushdown
+  // path when the bound exceeds the configured threshold.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void testBailoutWhenLeftExceedsThreshold() throws Exception {
+    // Clean slate: drop the large index if a prior failed run left it behind. This
+    // prevents state leak from bleeding into this run's bulk-seed.
+    try {
+      client().performRequest(new Request("DELETE", "/" + OS_INDEX_LARGE));
+    } catch (Exception ignored) {
+      // not yet created
+    }
+    Request create = new Request("PUT", "/" + OS_INDEX_LARGE);
+    create.setJsonEntity(
+        "{\"mappings\":{\"properties\":{\"user_id\":{\"type\":\"long\"}}},"
+            + "\"settings\":{\"index.number_of_shards\":1}}");
+    client().performRequest(create);
+
+    // Bulk 15000 unique user_ids — head 15000 will bind them all, exceeding the
+    // CH dialect threshold of 10000.
+    StringBuilder bulk = new StringBuilder();
+    for (int i = 0; i < 15_000; i++) {
+      bulk.append("{\"index\":{\"_index\":\"").append(OS_INDEX_LARGE).append("\"}}\n");
+      bulk.append("{\"user_id\":").append(i).append("}\n");
+    }
+    Request bulkReq = new Request("POST", "/_bulk");
+    bulkReq.addParameter("refresh", "true");
+    bulkReq.setJsonEntity(bulk.toString());
+    client().performRequest(bulkReq);
+
+    // Truncate CH query_log so we only see SQL from this test.
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    }
+
+    String ppl =
+        "source="
+            + OS_INDEX_LARGE
+            + " | head 15000"
+            + " | inner join left=d right=f on d.user_id = f.user_id"
+            + " [ source="
+            + DS_NAME
+            + "."
+            + CH_DATABASE
+            + "."
+            + CH_TABLE
+            + " | stats sum(v) as s by user_id ]";
+    executeQuery(ppl);
+
+    // Collect every CH SQL touching our table from the query_log.
+    List<String> observed = new ArrayList<>();
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
+        Statement st = c.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
+      try (ResultSet rs =
+          st.executeQuery(
+              "SELECT query FROM system.query_log "
+                  + "WHERE type = 'QueryFinish' "
+                  + "  AND query LIKE '%FROM %`"
+                  + CH_DATABASE
+                  + "`.`"
+                  + CH_TABLE
+                  + "`%' "
+                  + "  AND query NOT LIKE '%system.query_log%' "
+                  + "ORDER BY event_time ASC")) {
+        while (rs.next()) {
+          observed.add(rs.getString(1));
+        }
+      }
+    }
+
+    StringBuilder dump = new StringBuilder("=== CH query_log (bailout test) ===\n");
+    for (int i = 0; i < observed.size(); i++) {
+      dump.append("[CH SQL ").append(i).append("]\n").append(observed.get(i)).append("\n");
+    }
+    dump.append("=== END query_log (").append(observed.size()).append(" rows) ===");
+    System.out.println(dump);
+
+    // Robust assertion: for every CH SQL observed, reject any IN-list on user_id
+    // regardless of shape. Matches `user_id IN (<anything except closing paren>)`
+    // so it catches all three render shapes that prove a pushdown landed —
+    //   (1) IN (?)               — parametric placeholder form
+    //   (2) IN (1, 2, 3)         — driver-inlined scalar form
+    //   (3) IN ([1, 2, 3])       — clickhouse-jdbc 0.6.5 client-side-interpolated
+    //                              array-literal form (see Task 13)
+    // Without the pushdown rule firing, the CH SQL is
+    //   SELECT SUM(v), user_id FROM fed.fed_events GROUP BY user_id LIMIT 50000
+    // with no WHERE clause at all, so any matcher that rejects `user_id IN (...)`
+    // is correct. Whitespace around `IN` and backticks around `user_id` are
+    // tolerated via `\b` and `\s*`.
+    Pattern inListOnUserId =
+        Pattern.compile("(?s).*\\buser_id\\b\\s*`?\\s*IN\\s*\\([^)]*\\).*");
+    for (String sql : observed) {
+      assertFalse(
+          "At 15000 left rows (> threshold 10000), IN-list pushdown must not fire. Saw:\n" + sql,
+          inListOnUserId.matcher(sql).matches());
+    }
   }
 
   /**
