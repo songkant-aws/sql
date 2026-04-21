@@ -367,8 +367,8 @@ public class QueryService {
    * Bundle of the {@link FrameworkConfig} and the {@link SchemaPlus} rootSchema it was built
    * against. The rootSchema is threaded through to {@link CalcitePlanContext} so the JDBC
    * connection's root matches the planning tree; runtime JDBC codegen resolves sub-schemas from
-   * {@code DataContext.ROOT.getRootSchema()}, and a mismatched (driver-fabricated) root would
-   * make sub-schema lookups return null and NPE inside the generated bind code.
+   * {@code DataContext.ROOT.getRootSchema()}, and a mismatched (driver-fabricated) root would make
+   * sub-schema lookups return null and NPE inside the generated bind code.
    */
   private record CalciteConfig(FrameworkConfig config, SchemaPlus rootSchema) {}
 

@@ -150,11 +150,10 @@ public class CalcitePlanContext {
   }
 
   /**
-   * Create a context whose JDBC connection is bound to {@code rootSchema}. The runtime codegen
-   * path for pushed-down JDBC (e.g., the ClickHouse convention) resolves sub-schemas from {@code
+   * Create a context whose JDBC connection is bound to {@code rootSchema}. The runtime codegen path
+   * for pushed-down JDBC (e.g., the ClickHouse convention) resolves sub-schemas from {@code
    * DataContext.ROOT.getRootSchema()}; that root must be the same tree the planner saw, so we
-   * thread it through the connection here rather than letting Calcite fabricate a fresh empty
-   * root.
+   * thread it through the connection here rather than letting Calcite fabricate a fresh empty root.
    */
   public static CalcitePlanContext create(
       FrameworkConfig config, SysLimit sysLimit, QueryType queryType, SchemaPlus rootSchema) {

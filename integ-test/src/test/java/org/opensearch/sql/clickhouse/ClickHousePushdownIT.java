@@ -491,27 +491,25 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
       st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
     }
 
-    executeQuery(
-        "source = " + DS_NAME + ".a.t | eval r = round(v, 1) | fields id, r | head 1");
-    executeQuery(
-        "source = " + DS_NAME + ".a.t | where abs(id) > 50 | stats count() as c");
+    executeQuery("source = " + DS_NAME + ".a.t | eval r = round(v, 1) | fields id, r | head 1");
+    executeQuery("source = " + DS_NAME + ".a.t | where abs(id) > 50 | stats count() as c");
 
     List<String> observed = new ArrayList<>();
     try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
         Statement st = c.createStatement()) {
       st.execute("SYSTEM FLUSH LOGS");
-      try (ResultSet rs = st.executeQuery(
-          "SELECT query FROM system.query_log "
-              + "WHERE type = 'QueryFinish' "
-              + "  AND query LIKE '%FROM %`a`.`t`%' "
-              + "  AND query NOT LIKE '%system.query_log%' "
-              + "ORDER BY event_time ASC")) {
+      try (ResultSet rs =
+          st.executeQuery(
+              "SELECT query FROM system.query_log "
+                  + "WHERE type = 'QueryFinish' "
+                  + "  AND query LIKE '%FROM %`a`.`t`%' "
+                  + "  AND query NOT LIKE '%system.query_log%' "
+                  + "ORDER BY event_time ASC")) {
         while (rs.next()) observed.add(rs.getString(1));
       }
     }
 
-    assertThat("expected both math queries in CH log",
-        observed.size(), greaterThanOrEqualTo(2));
+    assertThat("expected both math queries in CH log", observed.size(), greaterThanOrEqualTo(2));
     String roundSql = findMatching(observed, "ROUND");
     assertThat("ROUND must be pushed into CH SQL", roundSql, containsString("ROUND"));
     String absSql = findMatching(observed, "ABS");
@@ -529,28 +527,30 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
     }
 
     // `eventstats` naturally lowers to Project(RexOver(ROW_NUMBER/RANK/...)) over the CH table.
-    executeQuery(
-        "source = " + DS_NAME + ".a.t | eventstats count() as total | head 3");
+    executeQuery("source = " + DS_NAME + ".a.t | eventstats count() as total | head 3");
 
     List<String> observed = new ArrayList<>();
     try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
         Statement st = c.createStatement()) {
       st.execute("SYSTEM FLUSH LOGS");
-      try (ResultSet rs = st.executeQuery(
-          "SELECT query FROM system.query_log "
-              + "WHERE type = 'QueryFinish' "
-              + "  AND query LIKE '%FROM %`a`.`t`%' "
-              + "  AND query NOT LIKE '%system.query_log%' "
-              + "ORDER BY event_time ASC")) {
+      try (ResultSet rs =
+          st.executeQuery(
+              "SELECT query FROM system.query_log "
+                  + "WHERE type = 'QueryFinish' "
+                  + "  AND query LIKE '%FROM %`a`.`t`%' "
+                  + "  AND query NOT LIKE '%system.query_log%' "
+                  + "ORDER BY event_time ASC")) {
         while (rs.next()) observed.add(rs.getString(1));
       }
     }
 
-    assertThat("expected at least one CH log entry for eventstats",
-        observed.size(), greaterThanOrEqualTo(1));
+    assertThat(
+        "expected at least one CH log entry for eventstats",
+        observed.size(),
+        greaterThanOrEqualTo(1));
     String windowSql = findMatching(observed, "OVER");
-    assertThat("window function must push as OVER clause to CH",
-        windowSql, containsString(" OVER "));
+    assertThat(
+        "window function must push as OVER clause to CH", windowSql, containsString(" OVER "));
   }
 
   @Test
@@ -563,19 +563,19 @@ public class ClickHousePushdownIT extends ClickHouseITBase {
       st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
     }
 
-    executeQuery(
-        "source = " + DS_NAME + ".a.t | stats stddev_pop(v) as sd, var_samp(v) as vs");
+    executeQuery("source = " + DS_NAME + ".a.t | stats stddev_pop(v) as sd, var_samp(v) as vs");
 
     List<String> observed = new ArrayList<>();
     try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
         Statement st = c.createStatement()) {
       st.execute("SYSTEM FLUSH LOGS");
-      try (ResultSet rs = st.executeQuery(
-          "SELECT query FROM system.query_log "
-              + "WHERE type = 'QueryFinish' "
-              + "  AND query LIKE '%FROM %`a`.`t`%' "
-              + "  AND query NOT LIKE '%system.query_log%' "
-              + "ORDER BY event_time ASC")) {
+      try (ResultSet rs =
+          st.executeQuery(
+              "SELECT query FROM system.query_log "
+                  + "WHERE type = 'QueryFinish' "
+                  + "  AND query LIKE '%FROM %`a`.`t`%' "
+                  + "  AND query NOT LIKE '%system.query_log%' "
+                  + "ORDER BY event_time ASC")) {
         while (rs.next()) observed.add(rs.getString(1));
       }
     }

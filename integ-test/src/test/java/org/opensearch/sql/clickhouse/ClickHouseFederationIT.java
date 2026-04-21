@@ -257,9 +257,7 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     // shapes prove that the pushdown reached CH; accept any.
     String inListSql = findInListSql(observed);
     assertThat(
-        "IN-list pushdown must target user_id\n" + dump,
-        inListSql,
-        containsString("`user_id`"));
+        "IN-list pushdown must target user_id\n" + dump, inListSql, containsString("`user_id`"));
     assertThat(
         "IN-list pushdown must land at CH as IN (?), IN (<keys>), or IN ([<keys>])\n" + dump,
         hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
@@ -541,11 +539,11 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   // --- helpers ---------------------------------------------------------------
 
   /**
-   * Truncates ClickHouse's {@code system.query_log} so the test only sees fresh SQL. Flushes
-   * any buffered query_log rows first so that entries still in the async write buffer from a
-   * prior test are landed on disk before the TRUNCATE wipes them — without this pre-flush,
-   * late-arriving entries from a prior test can appear in the current test's read window and
-   * cause spurious cross-test contamination.
+   * Truncates ClickHouse's {@code system.query_log} so the test only sees fresh SQL. Flushes any
+   * buffered query_log rows first so that entries still in the async write buffer from a prior test
+   * are landed on disk before the TRUNCATE wipes them — without this pre-flush, late-arriving
+   * entries from a prior test can appear in the current test's read window and cause spurious
+   * cross-test contamination.
    */
   private static void truncateChQueryLog(Connection ch) throws SQLException {
     try (Statement st = ch.createStatement()) {

@@ -2,6 +2,7 @@
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
  */
+
 package org.opensearch.sql.calcite.utils;
 
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -10,9 +11,9 @@ import org.apache.calcite.prepare.Prepare.PreparedResult;
 import org.apache.calcite.rel.RelRoot;
 
 /**
- * Allows optional modules (e.g. clickhouse) to wrap the prepared result returned by the
- * OpenSearch Calcite prepare path, injecting runtime behaviour without a hard dependency from
- * core &#x2192; clickhouse.
+ * Allows optional modules (e.g. clickhouse) to wrap the prepared result returned by the OpenSearch
+ * Calcite prepare path, injecting runtime behaviour without a hard dependency from core &#x2192;
+ * clickhouse.
  */
 public final class SideInputBindableHookRegistry {
   private static final CopyOnWriteArrayList<BiFunction<PreparedResult, RelRoot, PreparedResult>>

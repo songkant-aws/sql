@@ -2,6 +2,7 @@
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
  */
+
 package org.opensearch.sql.clickhouse;
 
 import static org.junit.Assert.assertEquals;
@@ -18,8 +19,8 @@ import org.junit.Test;
 
 /**
  * Spike: proves whether the ClickHouse JDBC driver accepts {@code PreparedStatement.setArray} with
- * {@code WHERE col IN (?)} (array-param path), or whether we must fall back to inline string-literal
- * substitution (e.g. {@code WHERE id IN (1, 3)}).
+ * {@code WHERE col IN (?)} (array-param path), or whether we must fall back to inline
+ * string-literal substitution (e.g. {@code WHERE id IN (1, 3)}).
  *
  * <p>The test first attempts the array-param path. If the driver throws an exception indicating it
  * does not support {@code setArray} for {@code IN (?)}, the test falls back to the string-literal
@@ -28,8 +29,8 @@ import org.junit.Test;
  * <p>This test stays in the tree as a regression guard for the IN-list pushdown feature.
  *
  * <p>NOTE: This spike lives in {@code integ-test} (not {@code :clickhouse:test}) because the
- * Testcontainers harness ({@link ClickHouseITBase}) is wired up only in {@code integ-test};
- * moving it would require restructuring the testcontainer setup, which is out of scope here.
+ * Testcontainers harness ({@link ClickHouseITBase}) is wired up only in {@code integ-test}; moving
+ * it would require restructuring the testcontainer setup, which is out of scope here.
  */
 public class ClickHouseArrayBindSpikeIT extends ClickHouseITBase {
 
@@ -56,8 +57,7 @@ public class ClickHouseArrayBindSpikeIT extends ClickHouseITBase {
       // Set up spike table
       try (Statement st = conn.createStatement()) {
         st.execute("DROP TABLE IF EXISTS spike_in");
-        st.execute(
-            "CREATE TABLE spike_in (id Int64, v Float64) ENGINE = MergeTree ORDER BY id");
+        st.execute("CREATE TABLE spike_in (id Int64, v Float64) ENGINE = MergeTree ORDER BY id");
         st.execute("INSERT INTO spike_in VALUES (1,10.0),(2,20.0),(3,30.0),(4,40.0)");
       }
 
@@ -110,10 +110,7 @@ public class ClickHouseArrayBindSpikeIT extends ClickHouseITBase {
 
       // ids 1 and 3: v=10.0 + v=30.0 = 40.0
       assertEquals(
-          "sum(v) for ids {1,3} must equal 40.0 regardless of IN-list path",
-          40.0,
-          result,
-          0.0001);
+          "sum(v) for ids {1,3} must equal 40.0 regardless of IN-list path", 40.0, result, 0.0001);
 
       // The ClickHouse JDBC driver must support setArray for IN-list binding.
       // If this assertion fails, the driver has regressed and downstream tasks
