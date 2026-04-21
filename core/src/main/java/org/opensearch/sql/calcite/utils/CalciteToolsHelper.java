@@ -554,9 +554,15 @@ public class CalciteToolsHelper {
             }
           };
       rel = rel.accept(shuttle);
-      // the line we changed here
-      try (Connection connection = context.connection) {
-        final RelRunner runner = connection.unwrap(RelRunner.class);
+      // Intentionally do NOT close context.connection here: the returned PreparedStatement's
+      // generated bindable code may call back into the connection (e.g., RelRunner unwrap, hook
+      // wrappers that drain and re-bind a side input) during executeQuery(). Closing the
+      // connection synchronously at prepare-time makes those callbacks fail with "Connection
+      // closed". Resource management is the caller's responsibility, matching
+      // UnifiedQueryCompiler#doCompile which explicitly leaves the connection open for the
+      // statement's lifetime.
+      try {
+        final RelRunner runner = context.connection.unwrap(RelRunner.class);
         PreparedStatement preparedStatement = runner.prepareStatement(rel);
         optimizeTime.set(System.nanoTime() - startTime);
         return preparedStatement;

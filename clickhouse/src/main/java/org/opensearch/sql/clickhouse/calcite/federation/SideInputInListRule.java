@@ -18,8 +18,10 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.hint.RelHint;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexDynamicParam;
@@ -41,12 +43,14 @@ import org.slf4j.LoggerFactory;
  * <p>No-ops if:
  *
  * <ul>
- *   <li>the join has no {@code bounded_left} hint,
+ *   <li>the join is not statically-provably bounded on its left side (neither a {@code
+ *       bounded_left} hint nor {@link RelMetadataQuery#getMaxRowCount} yields an upper bound
+ *       &le; {@link #METADATA_BOUND_CEILING}),
  *   <li>the right side is not a {@link JdbcToEnumerableConverter} (after stripping {@link
  *       HepRelVertex}/{@link RelSubset} wrappers),
  *   <li>the right-side JDBC dialect does not advertise {@link
  *       PplFederationDialect#supportsArrayInListParam()},
- *   <li>the hinted {@code size} exceeds the dialect's {@link
+ *   <li>the proven upper bound exceeds the right-side dialect's {@link
  *       PplFederationDialect#getInListPushdownThreshold()},
  *   <li>the join condition isn't a single binary equality on two {@link RexInputRef}s,
  *   <li>a {@link JdbcSideInputFilter} already exists anywhere on the right JDBC subtree
@@ -61,6 +65,14 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
 
   private static final Logger LOG = LoggerFactory.getLogger(SideInputInListRule.class);
 
+  /**
+   * Absolute ceiling used by the metadata fallback for the left-side row-count upper bound.
+   * Kept in sync with {@link BoundedJoinHintRule}'s attach-time ceiling (which is
+   * package-private) so the metadata fallback matches the hint-based path's behaviour. If
+   * {@link BoundedJoinHintRule} ever bumps its ceiling, this literal must follow suit.
+   */
+  private static final long METADATA_BOUND_CEILING = 10_000L;
+
   public static final SideInputInListRule INSTANCE = Config.DEFAULT.toRule();
 
   private SideInputInListRule(Config config) {
@@ -71,27 +83,19 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
   public void onMatch(RelOptRuleCall call) {
     Join join = call.rel(0);
 
-    // 1. hint presence
-    RelHint boundedHint = findBoundedLeftHint(join);
-    if (boundedHint == null) {
-      return;
-    }
-
-    // 2. parse size from hint kvOptions
-    long hintSize;
-    try {
-      String sizeStr = boundedHint.kvOptions.get(BoundedJoinHintRule.HINT_SIZE_KEY);
-      if (sizeStr == null) {
-        return;
-      }
-      hintSize = Long.parseLong(sizeStr);
-    } catch (NumberFormatException e) {
+    // 1. boundedness: prefer the bounded_left hint (set in HEP by BoundedJoinHintRule), but fall
+    //    back to structural row-count metadata. Calcite's EnumerableJoinRule.convert path does not
+    //    propagate hints onto the new EnumerableHashJoin, so by the time this Volcano rule fires
+    //    the hint is typically gone. The metadata fallback recovers structural proofs like a
+    //    Sort(fetch) on the left subtree (exactly what `| head N` produces) so we still fire on
+    //    bounded-left joins even when the hint has been stripped.
+    long boundedSize = determineBoundedSize(join);
+    if (boundedSize < 0) {
       return;
     }
 
     // 3. right input must be JdbcToEnumerableConverter (strip planner wrappers)
-    RelNode rawRight = join.getRight();
-    RelNode strippedRight = unwrap(rawRight);
+    RelNode strippedRight = unwrap(join.getRight());
     if (!(strippedRight instanceof JdbcToEnumerableConverter)) {
       return;
     }
@@ -123,13 +127,26 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     if (!caps.supportsArrayInListParam()) {
       return;
     }
-    if (hintSize > caps.getInListPushdownThreshold()) {
+    if (boundedSize > caps.getInListPushdownThreshold()) {
       return;
     }
 
     // 7. compute right key index from a single binary equality condition
     Integer rightKeyIdx = extractRightKeyIndex(join);
     if (rightKeyIdx == null) {
+      return;
+    }
+
+    // 7a. translate the key index from the right-subtree root row type down to the scan row type.
+    //     `rightKeyIdx` is an index into `strippedRight.getRowType()` (the converter's output),
+    //     but we wrap the scan at the bottom of the subtree. Intervening JdbcAggregate and
+    //     JdbcProject reorder/rename columns, so the same index can select a different column
+    //     against the scan (e.g. an aggregate output (s, user_id) vs. a scan (user_id, v) —
+    //     index 1 selects `user_id` at the aggregate and `v` at the scan). Map by column name.
+    int scanKeyIdx = mapRightKeyToScan(strippedRight, rightKeyIdx, scan);
+    if (scanKeyIdx < 0) {
+      LOG.debug(
+          "SideInputInListRule: right-top key name not found in scan row type; skipping");
       return;
     }
 
@@ -143,7 +160,7 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     // 9. build an array-typed RexDynamicParam (index 0) of the right key's column type
     RexBuilder rexBuilder = join.getCluster().getRexBuilder();
     RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
-    RelDataType keyType = scan.getRowType().getFieldList().get(rightKeyIdx).getType();
+    RelDataType keyType = scan.getRowType().getFieldList().get(scanKeyIdx).getType();
     RelDataType arrayType = typeFactory.createArrayType(keyType, -1);
     // Index 0 reserved for bounded-left IN-list binding; Task 12's runtime binder relies on this.
     // Don't reuse index 0 for any other federation rule without updating the binder contract.
@@ -151,7 +168,7 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
 
     // 10. wrap the scan with a JdbcSideInputFilter and rebuild the parent chain
     JdbcSideInputFilter filter =
-        JdbcSideInputFilter.create(scan, rightKeyIdx, arrayParam, jdbcConvention);
+        JdbcSideInputFilter.create(scan, scanKeyIdx, arrayParam, jdbcConvention);
     RelNode newJdbcTree = rebuildWithNewScan(converter.getInput(), scan, filter);
     if (newJdbcTree == null) {
       // couldn't rebuild — bail
@@ -181,6 +198,91 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
       }
     }
     return null;
+  }
+
+  /**
+   * Returns a statically-provable upper bound for the left-side row count, or {@code -1} if none
+   * can be determined. Prefers the {@code bounded_left} hint when present; otherwise consults
+   * {@link RelMetadataQuery#getMaxRowCount(RelNode)}. The metadata path handles the common case
+   * where Volcano's {@code EnumerableJoinRule.convert} constructs a fresh {@link
+   * EnumerableHashJoin} without copying hints — in that case Calcite's native {@code
+   * RelMdMaxRowCount} still returns the {@code Sort.fetch} value (which is what {@code | head N}
+   * produces upstream).
+   */
+  private static long determineBoundedSize(Join join) {
+    RelHint hint = findBoundedLeftHint(join);
+    if (hint != null) {
+      String sizeStr = hint.kvOptions.get(BoundedJoinHintRule.HINT_SIZE_KEY);
+      if (sizeStr != null) {
+        try {
+          return Long.parseLong(sizeStr);
+        } catch (NumberFormatException ignored) {
+          // fall through to metadata path
+        }
+      }
+    }
+    try {
+      RelMetadataQuery mq = join.getCluster().getMetadataQuery();
+      Double max = mq.getMaxRowCount(join.getLeft());
+      if (max != null && !max.isInfinite() && !max.isNaN() && max <= METADATA_BOUND_CEILING) {
+        return (long) Math.ceil(max);
+      }
+    } catch (Throwable t) {
+      // metadata providers can throw CyclicMetadataException etc. — treat as "unknown"
+      LOG.debug("SideInputInListRule: metadata getMaxRowCount threw; treating as unbounded", t);
+    }
+    // Structural fallback: walk the left subtree for a LIMIT-ish node (Sort with a literal fetch,
+    // Calcite's EnumerableLimit, LogicalSort, etc.). Storage adapters that push LIMIT into the
+    // scan (e.g. OpenSearch's CalciteEnumerableIndexScan exposes its LIMIT only through a private
+    // PushDownContext and its `estimateRowCount` override, not through getMaxRowCount) defeat the
+    // metadata path; in that case we fall through to the per-rel estimate below.
+    long structural = walkForStaticFetch(unwrap(join.getLeft()));
+    if (structural >= 0 && structural <= METADATA_BOUND_CEILING) {
+      return structural;
+    }
+    // Last resort: trust estimateRowCount when its value is small. Storage adapters that cap
+    // their estimate at a literal LIMIT (OpenSearch's CalciteEnumerableIndexScan) give a
+    // provable bound here; we deliberately only accept values <= the ceiling to avoid
+    // trusting Calcite's default 1e9-ish estimate.
+    try {
+      RelMetadataQuery mq = join.getCluster().getMetadataQuery();
+      Double est = mq.getRowCount(join.getLeft());
+      if (est != null && !est.isInfinite() && !est.isNaN() && est <= METADATA_BOUND_CEILING) {
+        return (long) Math.ceil(est);
+      }
+    } catch (Throwable t) {
+      LOG.debug("SideInputInListRule: metadata getRowCount threw; treating as unbounded", t);
+    }
+    return -1L;
+  }
+
+  /**
+   * Walks the single-input chain (through planner wrappers) for the first node exposing a literal
+   * fetch bound, returning its value. Matches {@link org.apache.calcite.rel.core.Sort}'s fetch
+   * slot since {@code EnumerableLimit} extends {@code Sort}. Stops on the first branching/fan-out
+   * node and returns {@code -1L} rather than guessing. Public for use by the runtime wrapper.
+   */
+  static long walkForStaticFetch(RelNode root) {
+    RelNode cur = unwrap(root);
+    while (cur != null) {
+      if (cur instanceof org.apache.calcite.rel.core.Sort) {
+        org.apache.calcite.rel.core.Sort sort = (org.apache.calcite.rel.core.Sort) cur;
+        if (sort.fetch instanceof org.apache.calcite.rex.RexLiteral) {
+          java.math.BigDecimal n =
+              (java.math.BigDecimal)
+                  ((org.apache.calcite.rex.RexLiteral) sort.fetch).getValue4();
+          if (n != null) {
+            return n.longValueExact();
+          }
+        }
+      }
+      List<RelNode> inputs = cur.getInputs();
+      if (inputs.size() != 1) {
+        return -1L;
+      }
+      cur = unwrap(inputs.get(0));
+    }
+    return -1L;
   }
 
   /** Strips HepRelVertex / RelSubset planner-internal wrappers. */
@@ -225,6 +327,30 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
       return ri - leftFieldCount;
     }
     return null;
+  }
+
+  /**
+   * The join-key index we compute from the join condition is an index into the right-subtree
+   * root's row type. But we wrap the scan (at the bottom of the subtree), whose row type
+   * differs (JdbcAggregate, JdbcProject renumber columns). Translate by name: use the right-top
+   * name and look it up in the scan row type. Returns {@code -1} if the name doesn't exist in
+   * the scan.
+   *
+   * <p>Rationale: in the canonical PPL federation case, the right side is
+   * {@code source=<table> | stats <agg> by <key>}. The {@code <key>} column appears at both the
+   * scan and at the aggregate output with the same name, so name-based mapping is unambiguous.
+   * Exotic aliasing at the top of the right subtree (where the key column name differs from the
+   * scan's) is left as a no-op; the standard join path then handles the query.
+   */
+  private static int mapRightKeyToScan(RelNode rightTop, int rightTopIdx, JdbcTableScan scan) {
+    String name = rightTop.getRowType().getFieldList().get(rightTopIdx).getName();
+    List<RelDataTypeField> scanFields = scan.getRowType().getFieldList();
+    for (int i = 0; i < scanFields.size(); i++) {
+      if (scanFields.get(i).getName().equals(name)) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /** Returns {@code true} if any node under {@code root} (exclusive) is a {@link Aggregate}. */
