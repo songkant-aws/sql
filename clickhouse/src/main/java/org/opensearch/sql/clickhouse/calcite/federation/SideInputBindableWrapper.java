@@ -162,13 +162,27 @@ public final class SideInputBindableWrapper implements PreparedResult {
     // 0.6.5 happens to read the array contents eagerly at bind, but that's a driver behaviour,
     // not a JDBC guarantee). See {@link #closingOnEnumeratorClose}.
     SqlArrayBinding binding = wrapAsSqlArrayIfPossible(rightDs, drained.distinctKeys());
-    Object paramValue = binding != null ? binding.array : drained.distinctKeys();
-    DataContext bound = bindInListParam(ctx, paramValue);
-    Enumerable<Object> boundEnumerable = inner.bind(bound);
     if (binding != null && binding.connection != null) {
-      return closingOnEnumeratorClose(boundEnumerable, binding.connection);
+      // Guard the bind path: if bindInListParam or inner.bind throws before we hand the
+      // connection off to closingOnEnumeratorClose, the caller will never see the enumerator and
+      // therefore never trigger enumerator-teardown close. Close the owning Connection eagerly
+      // on failure so driver resources don't leak.
+      try {
+        DataContext bound = bindInListParam(ctx, binding.array);
+        Enumerable<Object> boundEnumerable = inner.bind(bound);
+        return closingOnEnumeratorClose(boundEnumerable, binding.connection);
+      } catch (Throwable t) {
+        try {
+          binding.connection.close();
+        } catch (Exception ignore) {
+          // best effort; the original exception is the one that matters
+        }
+        throw t;
+      }
     }
-    return boundEnumerable;
+    // Object[] fallback path: no owning Connection to close, so no guard needed.
+    DataContext bound = bindInListParam(ctx, drained.distinctKeys());
+    return inner.bind(bound);
   }
 
   /**

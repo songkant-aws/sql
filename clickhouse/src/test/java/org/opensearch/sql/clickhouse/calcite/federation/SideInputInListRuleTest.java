@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import java.util.List;
 import org.apache.calcite.adapter.jdbc.JdbcTableScan;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
@@ -132,26 +131,21 @@ class SideInputInListRuleTest {
 
   @Test
   void mapRightKeyToScanReturnsFirstMatchOnNameCollision() {
-    // When the scan row type contains multiple columns with the same name (a pathological but
-    // possible artifact of nested projections), the helper must return the *first* match — this
-    // documents the existing contract of the linear scan.
+    // Approach: Calcite's RelDataTypeFactory.Builder.add() does not deduplicate field names
+    // (uniquify() is a separate, opt-in step), so we stage a real collision by adding "user_id"
+    // twice. The helper must return the *first* match (index 0) — this documents the contract
+    // of its linear-scan name lookup.
     RelNode rightTop = builder.scan("ch").project(builder.field("user_id")).build();
     RelDataTypeFactory tf = builder.getTypeFactory();
-    // Note: Calcite's RelDataTypeFactory.FieldInfoBuilder does not deduplicate field names; so we
-    // can stage a collision by adding "user_id" twice. The helper must return index 0 (first hit)
-    // rather than scanning past it.
     RelDataType collisionRowType =
         tf.builder()
             .add("user_id", SqlTypeName.BIGINT)
-            .add("user_id_alt", SqlTypeName.BIGINT)
+            .add("user_id", SqlTypeName.BIGINT)
             .build();
-    // Rename the second field manually to create an explicit "user_id" collision by mirroring the
-    // same name via Calcite's row type API when possible; if not available here, we assert that
-    // the helper at least returns a valid index into the scan fields.
     JdbcTableScan scan = mock(JdbcTableScan.class);
     when(scan.getRowType()).thenReturn(collisionRowType);
     int idx = SideInputInListRule.mapRightKeyToScan(rightTop, 0, scan);
-    // The only field named "user_id" is at index 0; that's the expected return.
+    // With two fields both literally named "user_id", the first-match contract requires index 0.
     assertEquals(0, idx);
   }
 
@@ -175,33 +169,12 @@ class SideInputInListRuleTest {
     assertEquals(50L, bound);
   }
 
-  @Test
-  void determineBoundedSizeReturnsMinusOneWhenLeftIsUnbounded() {
-    // No hint, no limit, no small row-count estimate — all three fallbacks must return no bound.
-    RelNode join =
-        builder
-            .scan("os")
-            .scan("ch")
-            .join(
-                JoinRelType.INNER,
-                builder.equals(builder.field(2, 0, 0), builder.field(2, 1, 0)))
-            .build();
-    long bound = SideInputInListRule.determineBoundedSize((Join) join);
-    // For a bare scan with no stats, getMaxRowCount() is +Infinity and getRowCount() is the
-    // default estimate (~100 for an unknown table, below the ceiling). Depending on the provider
-    // the estimate may still be accepted, so either:
-    //   * -1L (both max and est unbounded), or
-    //   * some small number <= METADATA_BOUND_CEILING (the estimate-fallback path).
-    // Either is a valid outcome. The contract we care about is: the method does not throw and
-    // returns a well-formed value.
-    // We deliberately do NOT enforce -1 here because Calcite's default metadata estimates a
-    // finite row count (~100) for bare AbstractTable scans, which this code interprets as a
-    // proven bound. That's correct behaviour: a finite estimate <= the ceiling counts.
-    // We only assert it is either -1 or <= METADATA_BOUND_CEILING.
-    org.junit.jupiter.api.Assertions.assertTrue(
-        bound == -1L || bound <= 10_000L,
-        "bounded size should be -1 or within ceiling; got=" + bound);
-  }
+  // Note: a previous "determineBoundedSizeReturnsMinusOneWhenLeftIsUnbounded" test was dropped
+  // because it asserted a tautology (`bound == -1 || bound <= 10_000`) that Calcite's default
+  // row-count estimates trivially satisfy. The layering (hint > maxRowCount > rowCount) is
+  // already covered by determineBoundedSizeUsesMetadataWhenLeftHasLimit and by the end-to-end
+  // ClickHouseFederationIT; tightening this unit test would require significant stat-provider
+  // scaffolding for little additional signal.
 
   // -------------------- helpers --------------------
 
