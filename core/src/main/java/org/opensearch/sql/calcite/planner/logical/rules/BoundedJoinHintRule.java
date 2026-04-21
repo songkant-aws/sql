@@ -11,8 +11,10 @@ import java.util.Optional;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelRule;
 import org.apache.calcite.rel.core.Join;
+import org.apache.calcite.rel.hint.HintStrategyTable;
 import org.apache.calcite.rel.hint.RelHint;
 import org.immutables.value.Value;
+import org.opensearch.sql.calcite.utils.PPLHintUtils;
 
 /**
  * HEP rule that attaches a {@code bounded_left} hint (with numeric {@code size} option) to any
@@ -52,6 +54,17 @@ public final class BoundedJoinHintRule extends RelRule<BoundedJoinHintRule.Confi
         RelHint.builder(HINT_NAME).hintOption(HINT_SIZE_KEY, bound.get().toString()).build();
     List<RelHint> newHints = new ArrayList<>(join.getHints());
     newHints.add(hint);
+    // Attaching a hint to the Join makes every subsequent HepPlanner rule invoke
+    // HintStrategyTable.isRuleExcluded(), which asserts (when -ea is on, as in the
+    // OpenSearch test JVM) that every hint present on the node is registered in the
+    // cluster's HintStrategyTable. PPLHintUtils registers the table when stats-hints
+    // paths execute, but plans without an earlier stats-hint call (e.g. stats | join
+    // under setQueryBucketSize) leave the cluster on HintStrategyTable.EMPTY, which
+    // causes Calcite to throw `AssertionError: hint bounded_left must be present`.
+    // Self-register here so the rule is safe regardless of which upstream PPL ops ran.
+    if (join.getCluster().getHintStrategies() == HintStrategyTable.EMPTY) {
+      join.getCluster().setHintStrategies(PPLHintUtils.HINT_STRATEGY_TABLE);
+    }
     call.transformTo(join.withHints(newHints));
   }
 
