@@ -354,33 +354,36 @@ public class CalciteToolsHelper {
         boolean isDml = root.kind.belongsTo(SqlKind.DML);
         final Bindable bindable = dataContext -> scannable.scan();
 
-        return new PreparedResultImpl(
-            resultType,
-            requireNonNull(parameterRowType, "parameterRowType"),
-            requireNonNull(fieldOrigins, "fieldOrigins"),
-            root.collation.getFieldCollations().isEmpty()
-                ? ImmutableList.of()
-                : ImmutableList.of(root.collation),
-            root.rel,
-            mapTableModOp(isDml, root.kind),
-            isDml) {
-          @Override
-          public String getCode() {
-            throw new UnsupportedOperationException();
-          }
+        PreparedResult scannablePrepared =
+            new PreparedResultImpl(
+                resultType,
+                requireNonNull(parameterRowType, "parameterRowType"),
+                requireNonNull(fieldOrigins, "fieldOrigins"),
+                root.collation.getFieldCollations().isEmpty()
+                    ? ImmutableList.of()
+                    : ImmutableList.of(root.collation),
+                root.rel,
+                mapTableModOp(isDml, root.kind),
+                isDml) {
+              @Override
+              public String getCode() {
+                throw new UnsupportedOperationException();
+              }
 
-          @Override
-          public Bindable getBindable(Meta.CursorFactory cursorFactory) {
-            return bindable;
-          }
+              @Override
+              public Bindable getBindable(Meta.CursorFactory cursorFactory) {
+                return bindable;
+              }
 
-          @Override
-          public Type getElementType() {
-            return resultType.getFieldList().size() == 1 ? Object.class : Object[].class;
-          }
-        };
+              @Override
+              public Type getElementType() {
+                return resultType.getFieldList().size() == 1 ? Object.class : Object[].class;
+              }
+            };
+        return SideInputBindableHookRegistry.maybeWrap(scannablePrepared, root);
       }
-      return super.implement(root);
+      PreparedResult prepared = super.implement(root);
+      return SideInputBindableHookRegistry.maybeWrap(prepared, root);
     }
 
     @Override
