@@ -157,4 +157,36 @@ public class ClickHouseSqlDialectTest {
     assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
         org.apache.calcite.sql.fun.SqlStdOperatorTable.SEARCH, bool, oneBool));
   }
+
+  @Test
+  public void supports_window_analytic_functions() {
+    org.apache.calcite.rel.type.RelDataTypeFactory tf =
+        new org.apache.calcite.sql.type.SqlTypeFactoryImpl(
+            org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+    org.apache.calcite.rel.type.RelDataType bigint = tf.createSqlType(
+        org.apache.calcite.sql.type.SqlTypeName.BIGINT);
+    org.apache.calcite.rel.type.RelDataType dbl = tf.createSqlType(
+        org.apache.calcite.sql.type.SqlTypeName.DOUBLE);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> none = java.util.List.of();
+    java.util.List<org.apache.calcite.rel.type.RelDataType> oneDouble = java.util.List.of(dbl);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> twoDouble =
+        java.util.List.of(dbl, bigint);
+
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.ROW_NUMBER, bigint, none));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.RANK, bigint, none));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.DENSE_RANK, bigint, none));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.LAG, dbl, twoDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.LEAD, dbl, twoDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.FIRST_VALUE, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.LAST_VALUE, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.NTH_VALUE, dbl, twoDouble));
+  }
 }
