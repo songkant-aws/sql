@@ -189,4 +189,16 @@ public class ClickHouseSqlDialectTest {
     assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
         org.apache.calcite.sql.fun.SqlStdOperatorTable.NTH_VALUE, dbl, twoDouble));
   }
+
+  @Test
+  public void supports_statistical_aggregates() {
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsAggregateFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.STDDEV_POP));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsAggregateFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.STDDEV_SAMP));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsAggregateFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.VAR_POP));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsAggregateFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.VAR_SAMP));
+  }
 }

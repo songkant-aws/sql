@@ -46,8 +46,13 @@ public class ClickHouseSqlDialect extends SqlDialect {
 
   @Override
   public boolean supportsAggregateFunction(SqlKind kind) {
-    return kind == SqlKind.COUNT || kind == SqlKind.SUM || kind == SqlKind.AVG
-        || kind == SqlKind.MIN || kind == SqlKind.MAX;
+    switch (kind) {
+      case COUNT: case SUM: case AVG: case MIN: case MAX:
+      case STDDEV_POP: case STDDEV_SAMP: case VAR_POP: case VAR_SAMP:
+        return true;
+      default:
+        return false;
+    }
   }
 
   public boolean supportsAggregateFunction(org.apache.calcite.sql.SqlOperator op) {
