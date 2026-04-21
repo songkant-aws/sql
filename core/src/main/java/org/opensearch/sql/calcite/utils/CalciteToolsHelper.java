@@ -38,6 +38,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import org.apache.calcite.adapter.enumerable.EnumerableConvention;
 import org.apache.calcite.adapter.enumerable.EnumerableRel;
@@ -272,6 +273,7 @@ public class CalciteToolsHelper {
 
     private void registerCustomizedRules(RelOptPlanner planner) {
       OpenSearchRules.OPEN_SEARCH_OPT_RULES.forEach(planner::addRule);
+      getExtraVolcanoRules().forEach(planner::addRule);
     }
 
     /**
@@ -573,6 +575,20 @@ public class CalciteToolsHelper {
           FilterMergeRule.Config.DEFAULT.toRule(),
           PPLSimplifyDedupRule.DEDUP_SIMPLIFY_RULE,
           org.opensearch.sql.calcite.planner.logical.rules.BoundedJoinHintRule.INSTANCE);
+
+  // Extra Volcano rules contributed by optional modules (e.g. clickhouse).
+  private static final CopyOnWriteArrayList<RelOptRule> extraVolcanoRules =
+      new CopyOnWriteArrayList<>();
+
+  public static void registerVolcanoRule(RelOptRule rule) {
+    if (extraVolcanoRules.stream().noneMatch(r -> r == rule)) {
+      extraVolcanoRules.add(rule);
+    }
+  }
+
+  static List<RelOptRule> getExtraVolcanoRules() {
+    return List.copyOf(extraVolcanoRules);
+  }
 
   private static final HepProgram HEP_PROGRAM =
       new HepProgramBuilder().addRuleCollection(hepRuleList).build();

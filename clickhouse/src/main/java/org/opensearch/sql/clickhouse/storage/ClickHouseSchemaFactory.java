@@ -18,6 +18,7 @@ import org.apache.calcite.schema.Wrapper;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.opensearch.sql.clickhouse.calcite.ClickHouseConvention;
 import org.opensearch.sql.clickhouse.calcite.ClickHouseSqlDialect;
+import org.opensearch.sql.clickhouse.calcite.federation.CalciteFederationRegistration;
 import org.opensearch.sql.clickhouse.config.ClickHouseTableSpec;
 
 public final class ClickHouseSchemaFactory {
@@ -43,6 +44,8 @@ public final class ClickHouseSchemaFactory {
       String datasourceName,
       DataSource dataSource,
       ClickHouseTableSpec.Schema spec) {
+    // Register federation-side Volcano rules once per JVM.
+    CalciteFederationRegistration.ensureRegistered();
     // Reject empty spec upfront: if spec.getDatabases() is empty, anyDelegate stays null and
     // downstream OuterWrapper.unwrap(JdbcSchema.class) silently returns null, which later
     // surfaces as an NPE deep inside Calcite codegen with no useful context. Fail fast here
