@@ -424,3 +424,48 @@ The following invariants must hold for the implementation to be correct. Future 
 - Symmetric IN-list (right bounded → left)
 - Broadcast join variant
 - Cross-datasource `stats` union (append from multiple sources)
+
+## Pushdown Verification (Empirical)
+
+Captured from ClickHouse `system.query_log` during `ClickHouseFederationIT.testBoundedLeftJoinAggregatedCh` on 2026-04-21.
+
+**PPL:**
+
+```
+source=fed_docs
+ | head 10
+ | inner join left=d right=f on d.user_id = f.user_id
+     [ source=ch.fed.fed_events | stats sum(v) as s by user_id ]
+```
+
+**Environment:**
+
+- OpenSearch side (`fed_docs`): 3 docs with `user_id ∈ {1, 3, 5}`
+- ClickHouse side (`fed.fed_events`): 1000 rows spread across `user_id ∈ {1..10}`
+- ClickHouse dialect threshold: 10 000
+- JDBC driver: `com.clickhouse:clickhouse-jdbc:0.6.5`
+
+**SQL observed on ClickHouse (from `system.query_log`, single `QueryFinish` entry):**
+
+```sql
+SELECT SUM(`v`) AS `s`, `user_id`
+FROM `fed`.`fed_events`
+WHERE `user_id` IN ([1,3,5])
+GROUP BY `user_id`
+LIMIT 50000
+```
+
+Confirms: IN-list pushdown fires with the three distinct left-side `user_id`s. The `JOIN_SUBSEARCH_MAXOUT=50000` floor is still appended as the outer `LIMIT`.
+
+**Note on array-literal rendering (`IN ([1,3,5])` rather than `IN (?)`):** The prepared statement handed to the `clickhouse-jdbc` driver is genuinely `... WHERE \`user_id\` IN (?)` with a `java.sql.Array` parameter bound via `setArray(int, Array)`. clickhouse-jdbc 0.6.5 is a client-side template engine — its `SqlBasedPreparedStatement` invokes `ClickHouseValues.convertToSqlExpression(Array)` and client-side-interpolates the bound value into the SQL text as `[v1,v2,...]` before shipping to the server. The SQL stored in `system.query_log` is the post-interpolation form. The pushdown is parametric at the JDBC API boundary.
+
+**Bailout case** (from `testBailoutWhenLeftExceedsThreshold`, 15 000 left rows > 10 000 threshold):
+
+```sql
+SELECT SUM(`v`) AS `s`, `user_id`
+FROM `fed`.`fed_events`
+GROUP BY `user_id`
+LIMIT 50000
+```
+
+No `WHERE user_id IN (...)` clause — the rule correctly no-ops when the static left bound exceeds the dialect threshold, and the query degrades to the pre-feature path.
