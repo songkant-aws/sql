@@ -425,6 +425,17 @@ The following invariants must hold for the implementation to be correct. Future 
 - Broadcast join variant
 - Cross-datasource `stats` union (append from multiple sources)
 
+### v1 hardening follow-ups (surfaced by final review)
+
+File these as v2 tasks before onboarding a second federation rule or a second dialect:
+
+- **Per-plan `paramIndex` allocator for `JdbcSideInputFilter`.** Today every filter is constructed with `paramIndex=0`; two filters in the same plan would collapse via `Filter.equals`. Harmless at v1 (rule emits at most one filter per plan) but latent. Replace the hard-coded `0` with a counter maintained by the rule call.
+- **Move SQL type-name inference behind `PplFederationDialect`.** `SideInputBindableWrapper.inferSqlTypeName` returns ClickHouse-specific names (`"Int64"`, `"Float64"`, …). PostgreSQL expects `BIGINT`/`DOUBLE PRECISION`. Delegate via a `PplFederationDialect#sqlTypeNameFor(Class<?>)` method before the second dialect lands.
+- **`BoundedCardinalityExtractor` should account for `Filter`.** Today `Filter` is traversed transparently; a `Filter(scan)` with no upstream `head` would overcount if the hint ever attaches. Safe today because the HEP rule also requires a bound, but worth tightening.
+- **Consolidate the `10_000` ceiling into a single constant.** `BoundedJoinHintRule.CEILING`, `SideInputInListRule.METADATA_BOUND_CEILING`, `SideInputBindableWrapper` fallback — three copies of the same literal. Promote to `PplFederationDialect` or a shared `FederationConstants`.
+- **Flip `SideInputDrainEnumerable.drain`'s append/check order** so the bailout message reports the actual threshold rather than `threshold + 1`.
+- **Expand the IT surface** to cover multi-key joins (rule must reject cleanly), NULL left keys (hash-set collapses them; driver's `createArrayOf` may refuse), and string-keyed joins (`inferSqlTypeName` returns `"String"` but no IT exercises it).
+
 ## Pushdown Verification (Empirical)
 
 Captured from ClickHouse `system.query_log` during `ClickHouseFederationIT.testBoundedLeftJoinAggregatedCh` on 2026-04-21.
