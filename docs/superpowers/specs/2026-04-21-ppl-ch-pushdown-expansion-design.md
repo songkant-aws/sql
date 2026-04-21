@@ -193,8 +193,8 @@ Dialect-override path (simple rename — `ClickHouseAggregateUnparser`):
 | PPL UDAF | CH target | Strategy |
 |---|---|---|
 | `DISTINCT_COUNT_APPROX(x)` | `uniq(x)` | Whitelist + unparse rename |
-| `ARGMIN(key, x)` | `argMin(x, key)` | Whitelist + unparse (note arg order swap) |
-| `ARGMAX(key, x)` | `argMax(x, key)` | same |
+
+(Note: ARGMIN / ARGMAX are *not currently registered* as PPL UDAFs in this codebase, so they are deferred. Add only when PPL exposes them.)
 
 HEP-rewrite path (curried syntax — `PplUdafToChAggRule`):
 
