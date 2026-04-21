@@ -97,6 +97,10 @@ public class ClickHouseSqlDialect extends SqlDialect {
       case "TAN":
       case "ATAN":
       case "ATAN2":
+      case "POSITION":
+      case "CHAR_LENGTH":
+      case "REPLACE":
+      case "REVERSE":
         return true;
       default:
         return false;

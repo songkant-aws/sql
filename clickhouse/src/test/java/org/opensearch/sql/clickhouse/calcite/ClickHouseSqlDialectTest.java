@@ -116,4 +116,28 @@ public class ClickHouseSqlDialectTest {
     assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
         org.apache.calcite.sql.fun.SqlStdOperatorTable.ATAN2, dbl, twoDouble));
   }
+
+  @Test
+  public void supports_scalar_string_functions() {
+    org.apache.calcite.rel.type.RelDataTypeFactory tf =
+        new org.apache.calcite.sql.type.SqlTypeFactoryImpl(
+            org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+    org.apache.calcite.rel.type.RelDataType str = tf.createSqlType(
+        org.apache.calcite.sql.type.SqlTypeName.VARCHAR);
+    org.apache.calcite.rel.type.RelDataType intT = tf.createSqlType(
+        org.apache.calcite.sql.type.SqlTypeName.INTEGER);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> oneStr = java.util.List.of(str);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> twoStr = java.util.List.of(str, str);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> threeStr =
+        java.util.List.of(str, str, str);
+
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.POSITION, intT, twoStr));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.CHAR_LENGTH, intT, oneStr));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.REPLACE, str, threeStr));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlLibraryOperators.REVERSE, str, oneStr));
+  }
 }
