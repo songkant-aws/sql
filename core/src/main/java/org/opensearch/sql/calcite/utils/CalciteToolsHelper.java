@@ -599,12 +599,34 @@ public class CalciteToolsHelper {
     return List.copyOf(extraVolcanoRules);
   }
 
-  private static final HepProgram HEP_PROGRAM =
-      new HepProgramBuilder().addRuleCollection(hepRuleList).build();
+  // Extra HEP rules contributed by optional modules (e.g. clickhouse). These run in the
+  // HEP phase (before Volcano) alongside the built-in hepRuleList.
+  private static final CopyOnWriteArrayList<RelOptRule> extraHepRules =
+      new CopyOnWriteArrayList<>();
+
+  public static void registerHepRule(RelOptRule rule) {
+    if (extraHepRules.stream().noneMatch(r -> r == rule)) {
+      extraHepRules.add(rule);
+    }
+  }
+
+  public static List<RelOptRule> getExtraHepRules() {
+    return List.copyOf(extraHepRules);
+  }
+
+  private static HepProgram buildHepProgram() {
+    HepProgramBuilder builder = new HepProgramBuilder();
+    builder.addRuleCollection(hepRuleList);
+    List<RelOptRule> extras = getExtraHepRules();
+    if (!extras.isEmpty()) {
+      builder.addRuleCollection(extras);
+    }
+    return builder.build();
+  }
 
   public static RelNode optimize(RelNode plan, CalcitePlanContext context) {
     Util.discard(context);
-    HepPlanner planner = new HepPlanner(HEP_PROGRAM);
+    HepPlanner planner = new HepPlanner(buildHepProgram());
     planner.setRoot(plan);
     return planner.findBestExp();
   }
