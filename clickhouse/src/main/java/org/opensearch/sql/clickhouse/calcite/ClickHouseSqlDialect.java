@@ -70,6 +70,7 @@ public class ClickHouseSqlDialect extends SqlDialect {
       case CAST: case COALESCE: case CASE:
       case LIKE:
       case COUNT: case SUM: case AVG: case MIN: case MAX:
+      case CEIL: case FLOOR:
         return true;
       default:
         break;
@@ -83,6 +84,19 @@ public class ClickHouseSqlDialect extends SqlDialect {
       case "TRIM":
       case "CONCAT":
       case "DATE_TRUNC":
+      case "ABS":
+      case "SQRT":
+      case "EXP":
+      case "LN":
+      case "LOG10":
+      case "POWER":
+      case "ROUND":
+      case "SIGN":
+      case "SIN":
+      case "COS":
+      case "TAN":
+      case "ATAN":
+      case "ATAN2":
         return true;
       default:
         return false;

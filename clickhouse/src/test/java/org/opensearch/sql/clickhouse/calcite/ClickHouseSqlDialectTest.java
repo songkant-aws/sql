@@ -74,4 +74,46 @@ public class ClickHouseSqlDialectTest {
         out.toUpperCase().contains("FETCH NEXT"),
         "ClickHouse rejects ANSI FETCH NEXT; output must not emit it. Was: " + out);
   }
+
+  @Test
+  public void supports_scalar_math_functions() {
+    org.apache.calcite.rel.type.RelDataTypeFactory tf =
+        new org.apache.calcite.sql.type.SqlTypeFactoryImpl(
+            org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+    org.apache.calcite.rel.type.RelDataType dbl = tf.createSqlType(
+        org.apache.calcite.sql.type.SqlTypeName.DOUBLE);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> oneDouble = java.util.List.of(dbl);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> twoDouble = java.util.List.of(dbl, dbl);
+
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.ABS, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.CEIL, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.FLOOR, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.SQRT, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.EXP, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.LN, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.LOG10, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.POWER, dbl, twoDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.ROUND, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.SIGN, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.SIN, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.COS, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.TAN, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.ATAN, dbl, oneDouble));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.ATAN2, dbl, twoDouble));
+  }
 }
