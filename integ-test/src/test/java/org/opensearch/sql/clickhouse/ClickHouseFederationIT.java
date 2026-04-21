@@ -50,6 +50,7 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   private static final String DS_NAME = "ch";
   private static final String OS_INDEX = "fed_docs";
   private static final String OS_INDEX_LARGE = "fed_docs_large";
+  private static final String OS_INDEX_EMPTY = "fed_docs_empty";
   private static final String CH_DATABASE = "fed";
   private static final String CH_TABLE = "fed_events";
 
@@ -83,6 +84,11 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
       client().performRequest(new Request("DELETE", "/" + OS_INDEX_LARGE));
     } catch (Exception ignored) {
       // best-effort cleanup — only the bailout test creates this index
+    }
+    try {
+      client().performRequest(new Request("DELETE", "/" + OS_INDEX_EMPTY));
+    } catch (Exception ignored) {
+      // best-effort cleanup — only the empty-left test creates this index
     }
   }
 
@@ -410,6 +416,49 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
         observedUserIds.contains(5));
   }
 
+  // ---------------------------------------------------------------------------
+  // Empty-left: seed an empty OS index and join it against an aggregated CH side.
+  // The runtime drain yields zero keys, which short-circuits the right-side
+  // sub-search to an empty IN-list — the final join result must be empty. This
+  // pins the no-rows edge case so a future refactor can't accidentally fall back
+  // to a full right-side scan when the left is empty.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void testEmptyLeftReturnsEmpty() throws Exception {
+    // Clean slate: drop leftover empty-left index from a prior failed run.
+    try {
+      client().performRequest(new Request("DELETE", "/" + OS_INDEX_EMPTY));
+    } catch (Exception ignored) {
+      // not yet created
+    }
+    Request create = new Request("PUT", "/" + OS_INDEX_EMPTY);
+    create.setJsonEntity("{\"mappings\":{\"properties\":{\"user_id\":{\"type\":\"long\"}}}}");
+    client().performRequest(create);
+    client().performRequest(new Request("POST", "/" + OS_INDEX_EMPTY + "/_refresh"));
+
+    String ppl =
+        "source="
+            + OS_INDEX_EMPTY
+            + " | head 10"
+            + " | inner join left=d right=f on d.user_id = f.user_id"
+            + " [ source="
+            + DS_NAME
+            + "."
+            + CH_DATABASE
+            + "."
+            + CH_TABLE
+            + " | stats sum(v) as s by user_id ]";
+    JSONObject j = executeQuery(ppl);
+
+    // Empty left → empty join output. Assert on the parsed shape rather than the
+    // raw body text so we don't depend on pretty-print whitespace.
+    JSONArray rows = j.getJSONArray("datarows");
+    assertTrue(
+        "Empty left should produce empty result. Got datarows: " + rows.toString(),
+        rows.length() == 0);
+  }
+
   /**
    * Returns {@code true} iff {@code sql} contains an IN-list matching any of the three shapes
    * accepted by this test suite, with distinct keys drawn from {@code expectedKeys}:
@@ -491,9 +540,16 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
 
   // --- helpers ---------------------------------------------------------------
 
-  /** Truncates ClickHouse's {@code system.query_log} so the test only sees fresh SQL. */
+  /**
+   * Truncates ClickHouse's {@code system.query_log} so the test only sees fresh SQL. Flushes
+   * any buffered query_log rows first so that entries still in the async write buffer from a
+   * prior test are landed on disk before the TRUNCATE wipes them — without this pre-flush,
+   * late-arriving entries from a prior test can appear in the current test's read window and
+   * cause spurious cross-test contamination.
+   */
   private static void truncateChQueryLog(Connection ch) throws SQLException {
     try (Statement st = ch.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
       st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
     }
   }
