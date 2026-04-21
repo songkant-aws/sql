@@ -5,7 +5,6 @@
 
 package org.opensearch.sql.clickhouse.calcite;
 
-import java.util.Locale;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlKind;
@@ -13,7 +12,6 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWriter;
 import org.opensearch.sql.clickhouse.calcite.federation.PplFederationDialect;
 import org.opensearch.sql.clickhouse.calcite.federation.PplFederationDialectRegistry;
-import org.opensearch.sql.clickhouse.calcite.pushdown.ClickHouseDateTimeUnparser;
 
 public class ClickHouseSqlDialect extends SqlDialect {
   public static final SqlDialect.Context CTX =
@@ -86,11 +84,7 @@ public class ClickHouseSqlDialect extends SqlDialect {
       default:
         break;
     }
-    String name = op.getName().toUpperCase(Locale.ROOT);
-    // Tier-2 datetime delegation: single source of truth in ClickHouseDateTimeUnparser
-    if (ClickHouseDateTimeUnparser.hasHandler(name)) {
-      return true;
-    }
+    String name = op.getName().toUpperCase();
     switch (name) {
       case "SUBSTRING":
       case "LOWER":
@@ -134,16 +128,5 @@ public class ClickHouseSqlDialect extends SqlDialect {
   @Override
   public void unparseOffsetFetch(SqlWriter writer, SqlNode offset, SqlNode fetch) {
     unparseFetchUsingLimit(writer, offset, fetch);
-  }
-
-  @Override
-  public void unparseCall(SqlWriter writer, org.apache.calcite.sql.SqlCall call,
-                          int leftPrec, int rightPrec) {
-    String name = call.getOperator().getName().toUpperCase(Locale.ROOT);
-    if (ClickHouseDateTimeUnparser.hasHandler(name)) {
-      ClickHouseDateTimeUnparser.unparse(writer, call, leftPrec, rightPrec);
-      return;
-    }
-    super.unparseCall(writer, call, leftPrec, rightPrec);
   }
 }
