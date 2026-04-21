@@ -48,6 +48,18 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ matrix.java }}
 
+      # Cache the ClickHouse static tarball so we download ~250MB once across the
+      # entire CI matrix instead of per job. Key is tied to the pinned binary version
+      # declared in the root build.gradle (`clickhouse_binary_version = "24.3.11.7"`).
+      # Only the tarball itself is cached — unpacking happens inside startClickhouse so
+      # each job gets a fresh staging dir and fresh data dir (no cross-run leakage).
+      - name: Cache ClickHouse tarball (Linux)
+        if: ${{ matrix.test-type == 'integration' }}
+        uses: actions/cache@v4
+        with:
+          path: integ-test/bin/clickhouse-*.tgz
+          key: clickhouse-24.3.11.7-${{ runner.os }}-${{ runner.arch }}
+
       - name: Build and Test
         run: |
           chown -R 1000:1000 `pwd`
@@ -128,6 +140,17 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.entry.java }}
+
+      # Cache the ClickHouse static tarball per-OS/arch. Key includes runner.os +
+      # runner.arch because the tarball is platform-specific (Linux-amd64 vs macOS-arm64).
+      # Windows skips CH IT entirely (startClickhouse is gated off on Windows in
+      # integ-test/build.gradle), so the cache miss there is harmless.
+      - name: Cache ClickHouse tarball (macOS/Windows)
+        if: ${{ matrix.test-type == 'integration' && matrix.entry.os != 'windows-latest' }}
+        uses: actions/cache@v4
+        with:
+          path: integ-test/bin/clickhouse-*.tgz
+          key: clickhouse-24.3.11.7-${{ runner.os }}-${{ runner.arch }}
 
       - name: Build and Test
         run: |
