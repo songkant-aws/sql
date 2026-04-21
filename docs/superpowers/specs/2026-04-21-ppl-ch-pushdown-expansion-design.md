@@ -1,8 +1,41 @@
 # PPL → ClickHouse Pushdown Coverage Expansion Design
 
-**Status:** Approved for implementation (2026-04-21)
+**Status:** Implemented 2026-04-21 — **scope cut: Tier-1 only**. See **Implementation Outcome** below before reading the rest.
 **Base branch:** `feat/ppl-federation`
 **Implementation branch:** `feat/ppl-federation` (continuation — no new branch, matches `feat/clickhouse-datasource` extension rule)
+
+## Implementation Outcome (2026-04-21 end-of-implementation note)
+
+The full Tier-2 and Tier-3 scope below was **cut during implementation** because of a Calcite 1.41 constraint we had not surfaced during brainstorming. Tier-1 shipped and has end-to-end IT coverage; Tier-2 and Tier-3 did not ship and the reasons are architectural, not execution gaps.
+
+**What shipped (Tier-1):**
+
+- Scalar math whitelist (commit `ebfc433df`)
+- Scalar string whitelist (commit `a55b80b0e`)
+- Predicate whitelist — IS_TRUE / IS_FALSE / SEARCH (commit `e74017b89`)
+- Window analytic whitelist (commit `06f447d23`)
+- Statistical aggregate whitelist — STDDEV_POP / STDDEV_SAMP / VAR_POP / VAR_SAMP (commit `46e6a1018`)
+- HEP rule registration hook — `CalciteToolsHelper.registerHepRule` (commit `52fc7a0bd`). Retained because the hook itself is a clean, broadly-useful extension point even though no Tier-2 rule uses it now.
+- End-to-end ITs with `system.query_log` verification for math / window / stddev (commit `67cdb450a`)
+
+Every Tier-1 operator above is backed by a standard Calcite operator (`SqlStdOperatorTable` / `SqlLibraryOperators`), so Calcite's stock `JdbcProjectRule` / `JdbcFilterRule` / `JdbcAggregateRule` promote them to JDBC convention and the CH dialect emits them verbatim.
+
+**What was cut and why:**
+
+1. **Tier-2 DateTime unparser** (`ClickHouseDateTimeUnparser`, originally Task 7). Landed, then reverted in commit `c4ffb9de3`. Reason: PPL datetime functions (`DATE_ADD` / `DATE_SUB` / `DATE_FORMAT` / `YEAR` / `MONTH` / ...) are registered in `PPLBuiltinOperators` as `SqlUserDefinedFunction` with category `USER_DEFINED_FUNCTION`. Calcite 1.41 `JdbcProjectRule.matches` / `JdbcFilterRule.matches` unconditionally reject any Project / Filter whose `RexNode` tree contains a UDF (bytecode-verified: they call `CheckingUserDefinedFunctionVisitor` and never consult `SqlDialect.supportsFunction`). So even though our dialect whitelisted these names and the unparser had handlers for them, no `JdbcProject` / `JdbcFilter` was ever formed — the unparser was dead code in production. Empirical confirmation: `EXPLAIN` on `| eval t2 = DATE_ADD(ts, INTERVAL 3 DAY)` showed `LogicalProject(...)` over `JdbcTableScan` with the project never promoted to JDBC convention.
+2. **Tier-2 SpanBucket rewrite** (originally Tasks 8 + 9). Reverted in commit `263567245`. Reason: the production `SpanBucketFunction` is a 2-arg UDF that returns a formatted VARCHAR range string (`"0-5"`), not the 3-arg numeric sentinel the spec assumed. The HEP rule would have rewritten to the wrong semantics.
+3. **Tier-2 UDAF unparsers** — `DISTINCT_COUNT_APPROX → uniq`, `PERCENTILE_APPROX → quantile(p)(x)` (originally Tasks 10 + 11). Reverted in commit `30c3ced6b`. Reason: Calcite 1.41 `JdbcAggregateRule.canImplement` calls only the `SqlDialect.supportsAggregateFunction(SqlKind)` overload, not the `(SqlOperator)` overload (bytecode-verified). Both `DISTINCT_COUNT_APPROX` and `PERCENTILE_APPROX` resolve to `SqlKind.OTHER_FUNCTION`, so any attempt to whitelist them at the JDBC aggregate gate would simultaneously whitelist every other OTHER_FUNCTION UDAF — over-approximation we rejected.
+4. **Tier-3 defensive guard** (originally Task 12). Marked obsolete because (per the spec itself) Tier-3 is reactive to Tier-2 plan tests, and no Tier-2 plan tests exist.
+
+**Paths forward, if a future release wants to resurrect Tier-2:**
+
+- **For datetime functions:** re-register the PPL datetime UDFs as standard Calcite operators (like Tier-1's ROUND / ABS / ... which map to `SqlStdOperatorTable` entries in `PPLFuncImpTable`). This requires PPL-core surgery, not just a dialect edit. The Tier-2 `unparseCall` approach then works.
+- **Alternative for datetime:** ship a custom `JdbcProjectRule` / `JdbcFilterRule` that consults `SqlDialect.supportsFunction` for USER_DEFINED_FUNCTION instead of rejecting unconditionally. Localized to CH convention to avoid perturbing other JDBC adapters. Or a HEP pre-pass that rewrites UDF calls to std-operator equivalents before Volcano fires.
+- **For UDAFs:** requires either a custom `JdbcAggregateRule` that consults the `(SqlOperator)` overload, or PPL-core work to assign each UDAF a distinct `SqlKind`. Without one of those, the Tier-2 UDAF rewrite cannot be made precise at the JDBC aggregate gate.
+
+The **spec text below the dividing line is preserved as an archeological record** of what we believed was achievable during brainstorming. It is not the shipped design. Anyone re-opening this area of code should start from the Implementation Outcome section above.
+
+---
 
 ## Goal
 

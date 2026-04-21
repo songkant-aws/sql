@@ -1,5 +1,9 @@
 # PPL → ClickHouse Pushdown Coverage Expansion Implementation Plan
 
+> **Status (2026-04-21, end-of-implementation):** Tasks 1–6 and Task 13 shipped. Tasks 7–12 did NOT ship — they were reverted (Task 7) or dropped (8–12) because of Calcite 1.41 JDBC-convention rule constraints we did not surface during brainstorming. See the companion spec's **Implementation Outcome** section for the architectural rationale (short version: `JdbcProjectRule` / `JdbcFilterRule` reject UDFs unconditionally; `JdbcAggregateRule` checks only `SqlKind`, not `SqlOperator`). The task list below is the **original plan as written**, not the shipped result — it is preserved for historical / audit reasons. Do NOT use it as a to-do for net-new work.
+>
+> **Actually shipped (by commit):** `52fc7a0bd` (HEP hook), `ebfc433df` (math whitelist), `a55b80b0e` (string whitelist), `e74017b89` (predicate whitelist), `06f447d23` (window whitelist), `46e6a1018` (stat-aggregate whitelist), `67cdb450a` (Tier-1 end-to-end ITs). Reverts: `263567245` (SpanBucket), `30c3ced6b` (UDAF unparsers), `c4ffb9de3` (datetime unparser).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expand the `ClickHouseSqlDialect` whitelist and add HEP rewrites so PPL operators that already lower to `Project / Filter / Aggregate / Project(RexOver)` get pushed to ClickHouse instead of running in Enumerable.
