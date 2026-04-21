@@ -720,7 +720,14 @@ integTest {
         dependsOn startPrometheus
         finalizedBy stopPrometheus
     }
-    if (useClickhouseBinary && getOSFamilyType() != "windows") {
+    // Binary-mode CH IT only runs on Linux. Windows lacks POSIX semantics the start/stop
+    // tasks rely on (pgrep/kill, pid-file signalling). macOS CI runners hit a 60s readiness
+    // timeout on the static tarball — see investigation on
+    // https://github.com/songkant-aws/sql/actions/runs/24723030241 — and ClickHouseITBase
+    // would skip these tests anyway (no Docker on GitHub-hosted macOS runners), so the
+    // per-OS cost of debugging macOS binary startup isn't worth it. Linux IT coverage is
+    // canonical for ClickHouse pushdown.
+    if (useClickhouseBinary && getOSFamilyType() == "linux") {
         dependsOn startClickhouse
         finalizedBy stopClickhouse
         // Tell IT tests (ClickHouseITBase) to skip Testcontainers and dial the local binary.
