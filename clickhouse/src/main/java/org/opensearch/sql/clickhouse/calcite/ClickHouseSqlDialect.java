@@ -13,6 +13,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWriter;
 import org.opensearch.sql.clickhouse.calcite.federation.PplFederationDialect;
 import org.opensearch.sql.clickhouse.calcite.federation.PplFederationDialectRegistry;
+import org.opensearch.sql.clickhouse.calcite.pushdown.ClickHouseAggregateUnparser;
 import org.opensearch.sql.clickhouse.calcite.pushdown.ClickHouseDateTimeUnparser;
 
 public class ClickHouseSqlDialect extends SqlDialect {
@@ -58,6 +59,15 @@ public class ClickHouseSqlDialect extends SqlDialect {
   }
 
   public boolean supportsAggregateFunction(org.apache.calcite.sql.SqlOperator op) {
+    // Consult the aggregate-unparse map first so named UDAFs whose unparse we own
+    // (e.g. DISTINCT_COUNT_APPROX -> uniq) are whitelisted here. NOTE: Calcite 1.41
+    // SqlDialect exposes only supportsAggregateFunction(SqlKind) as overridable, and
+    // JdbcRules.canImplement invokes that overload; this (SqlOperator) overload is
+    // consumed by our own tests and any future callers. End-to-end JDBC pushdown for
+    // OTHER_FUNCTION UDAFs requires a separate hook (HEP pre-rewrite or convention rule).
+    if (ClickHouseAggregateUnparser.hasHandler(op.getName().toUpperCase(Locale.ROOT))) {
+      return true;
+    }
     return supportsAggregateFunction(op.getKind());
   }
 
@@ -142,6 +152,10 @@ public class ClickHouseSqlDialect extends SqlDialect {
     String name = call.getOperator().getName().toUpperCase(Locale.ROOT);
     if (ClickHouseDateTimeUnparser.hasHandler(name)) {
       ClickHouseDateTimeUnparser.unparse(writer, call, leftPrec, rightPrec);
+      return;
+    }
+    if (ClickHouseAggregateUnparser.hasHandler(name)) {
+      ClickHouseAggregateUnparser.unparse(writer, call, leftPrec, rightPrec);
       return;
     }
     super.unparseCall(writer, call, leftPrec, rightPrec);
