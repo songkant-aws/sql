@@ -85,6 +85,11 @@ public class ClickHouseSqlDialect extends SqlDialect {
         break;
     }
     String name = op.getName().toUpperCase();
+    // Tier-2 datetime delegation: single source of truth in ClickHouseDateTimeUnparser
+    if (org.opensearch.sql.clickhouse.calcite.pushdown.ClickHouseDateTimeUnparser
+        .hasHandler(name)) {
+      return true;
+    }
     switch (name) {
       case "SUBSTRING":
       case "LOWER":
@@ -128,5 +133,18 @@ public class ClickHouseSqlDialect extends SqlDialect {
   @Override
   public void unparseOffsetFetch(SqlWriter writer, SqlNode offset, SqlNode fetch) {
     unparseFetchUsingLimit(writer, offset, fetch);
+  }
+
+  @Override
+  public void unparseCall(SqlWriter writer, org.apache.calcite.sql.SqlCall call,
+                          int leftPrec, int rightPrec) {
+    String name = call.getOperator().getName().toUpperCase();
+    if (org.opensearch.sql.clickhouse.calcite.pushdown.ClickHouseDateTimeUnparser
+        .hasHandler(name)) {
+      org.opensearch.sql.clickhouse.calcite.pushdown.ClickHouseDateTimeUnparser
+          .unparse(writer, call, leftPrec, rightPrec);
+      return;
+    }
+    super.unparseCall(writer, call, leftPrec, rightPrec);
   }
 }
