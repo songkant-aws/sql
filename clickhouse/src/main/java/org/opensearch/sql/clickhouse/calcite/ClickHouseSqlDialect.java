@@ -71,6 +71,7 @@ public class ClickHouseSqlDialect extends SqlDialect {
       case LIKE:
       case COUNT: case SUM: case AVG: case MIN: case MAX:
       case CEIL: case FLOOR:
+      case IS_TRUE: case IS_FALSE: case SEARCH:
         return true;
       default:
         break;

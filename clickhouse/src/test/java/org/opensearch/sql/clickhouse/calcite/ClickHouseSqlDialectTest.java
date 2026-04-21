@@ -140,4 +140,21 @@ public class ClickHouseSqlDialectTest {
     assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
         org.apache.calcite.sql.fun.SqlLibraryOperators.REVERSE, str, oneStr));
   }
+
+  @Test
+  public void supports_predicate_functions() {
+    org.apache.calcite.rel.type.RelDataTypeFactory tf =
+        new org.apache.calcite.sql.type.SqlTypeFactoryImpl(
+            org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+    org.apache.calcite.rel.type.RelDataType bool = tf.createSqlType(
+        org.apache.calcite.sql.type.SqlTypeName.BOOLEAN);
+    java.util.List<org.apache.calcite.rel.type.RelDataType> oneBool = java.util.List.of(bool);
+
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.IS_TRUE, bool, oneBool));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.IS_FALSE, bool, oneBool));
+    assertTrue(ClickHouseSqlDialect.INSTANCE.supportsFunction(
+        org.apache.calcite.sql.fun.SqlStdOperatorTable.SEARCH, bool, oneBool));
+  }
 }
