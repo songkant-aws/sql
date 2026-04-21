@@ -11,9 +11,11 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -23,6 +25,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.After;
@@ -49,6 +52,11 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   private static final String OS_INDEX_LARGE = "fed_docs_large";
   private static final String CH_DATABASE = "fed";
   private static final String CH_TABLE = "fed_events";
+
+  // Must match org.opensearch.sql.clickhouse.calcite.ClickHouseSqlDialect IN-list threshold.
+  private static final int CH_IN_LIST_THRESHOLD = 10_000;
+  // Sized to force bailout: left-side row count must strictly exceed CH_IN_LIST_THRESHOLD.
+  private static final int BAILOUT_SEED_SIZE = CH_IN_LIST_THRESHOLD + 5_000;
 
   @Before
   public void setup() throws Exception {
@@ -186,9 +194,8 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     Properties p = new Properties();
     p.setProperty("user", chUser());
     p.setProperty("password", chPassword());
-    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
-        Statement st = c.createStatement()) {
-      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      truncateChQueryLog(c);
     }
 
     String ppl =
@@ -222,35 +229,17 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     assertThat("user_id=5 must be in the join output", observedUserIds.contains(5), equalTo(true));
 
     // (2) CH-side SQL verification — the query_log must show an IN-list pushdown on user_id.
-    List<String> observed = new ArrayList<>();
-    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
-        Statement st = c.createStatement()) {
-      st.execute("SYSTEM FLUSH LOGS");
-      try (ResultSet rs =
-          st.executeQuery(
-              "SELECT query FROM system.query_log "
-                  + "WHERE type = 'QueryFinish' "
-                  + "  AND query LIKE '%FROM %`"
-                  + CH_DATABASE
-                  + "`.`"
-                  + CH_TABLE
-                  + "`%' "
-                  + "  AND query NOT LIKE '%system.query_log%' "
-                  + "ORDER BY event_time ASC")) {
-        while (rs.next()) {
-          observed.add(rs.getString(1));
-        }
-      }
+    List<String> observed;
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      observed = readChQueryLogForFedEvents(c);
     }
+    // Built eagerly but only surfaced by JUnit when a downstream assertion fails.
+    String dump = dumpObservedSql("CH query_log (federation IN-list)", observed);
 
-    StringBuilder dump = new StringBuilder("=== CH query_log (federation IN-list) ===\n");
-    for (int i = 0; i < observed.size(); i++) {
-      dump.append("[CH SQL ").append(i).append("]\n").append(observed.get(i)).append("\n");
-    }
-    dump.append("=== END query_log (").append(observed.size()).append(" rows) ===");
-    System.out.println(dump);
-
-    assertThat("at least one CH SELECT must have landed", observed.size(), greaterThanOrEqualTo(1));
+    assertThat(
+        "at least one CH SELECT must have landed\n" + dump,
+        observed.size(),
+        greaterThanOrEqualTo(1));
 
     // ClickHouse may inline small array params (IN (1, 3, 5)), preserve the parameter marker
     // (IN (?)) if the driver forwards the PreparedStatement's placeholder, or — the most
@@ -261,20 +250,23 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     // render seen in system.query_log and is a valid parametric-pushdown form. All three
     // shapes prove that the pushdown reached CH; accept any.
     String inListSql = findInListSql(observed);
-    assertThat("IN-list pushdown must target user_id", inListSql, containsString("`user_id`"));
     assertThat(
-        "IN-list pushdown must land at CH as IN (?), IN (<keys>), or IN ([<keys>])",
+        "IN-list pushdown must target user_id\n" + dump,
+        inListSql,
+        containsString("`user_id`"));
+    assertThat(
+        "IN-list pushdown must land at CH as IN (?), IN (<keys>), or IN ([<keys>])\n" + dump,
         hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
         equalTo(true));
   }
 
   // ---------------------------------------------------------------------------
-  // Bailout: when the bounded left (head 15000) exceeds the ClickHouse dialect's
-  // IN-list threshold (10000 — see ClickHouseSqlDialect), the federation rule must
-  // no-op rather than push down a monstrously-sized IN-list. The CH query_log
-  // should therefore carry the full-scan + aggregation SQL with NO IN-list
-  // pushdown on user_id — proving the rule correctly degrades to the non-pushdown
-  // path when the bound exceeds the configured threshold.
+  // Bailout: when the bounded left (head BAILOUT_SEED_SIZE) exceeds the ClickHouse
+  // dialect's IN-list threshold (CH_IN_LIST_THRESHOLD — see ClickHouseSqlDialect),
+  // the federation rule must no-op rather than push down a monstrously-sized
+  // IN-list. The CH query_log should therefore carry the full-scan + aggregation
+  // SQL with NO IN-list pushdown on user_id — proving the rule correctly degrades
+  // to the non-pushdown path when the bound exceeds the configured threshold.
   // ---------------------------------------------------------------------------
 
   @Test
@@ -292,10 +284,10 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
             + "\"settings\":{\"index.number_of_shards\":1}}");
     client().performRequest(create);
 
-    // Bulk 15000 unique user_ids — head 15000 will bind them all, exceeding the
-    // CH dialect threshold of 10000.
+    // Bulk BAILOUT_SEED_SIZE unique user_ids — head BAILOUT_SEED_SIZE will bind
+    // them all, exceeding the CH dialect threshold of CH_IN_LIST_THRESHOLD.
     StringBuilder bulk = new StringBuilder();
-    for (int i = 0; i < 15_000; i++) {
+    for (int i = 0; i < BAILOUT_SEED_SIZE; i++) {
       bulk.append("{\"index\":{\"_index\":\"").append(OS_INDEX_LARGE).append("\"}}\n");
       bulk.append("{\"user_id\":").append(i).append("}\n");
     }
@@ -304,19 +296,28 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     bulkReq.setJsonEntity(bulk.toString());
     client().performRequest(bulkReq);
 
+    // Verify all docs made it in — catches partial bulk failures that would
+    // silently flip this test to a false positive (left row count < threshold).
+    Request count = new Request("GET", "/" + OS_INDEX_LARGE + "/_count");
+    Response countResp = client().performRequest(count);
+    String countBody = EntityUtils.toString(countResp.getEntity());
+    assertTrue(
+        "Bulk failed to index all " + BAILOUT_SEED_SIZE + " docs. Response: " + countBody,
+        countBody.contains("\"count\":" + BAILOUT_SEED_SIZE));
+
     // Truncate CH query_log so we only see SQL from this test.
     Properties p = new Properties();
     p.setProperty("user", chUser());
     p.setProperty("password", chPassword());
-    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
-        Statement st = c.createStatement()) {
-      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      truncateChQueryLog(c);
     }
 
     String ppl =
         "source="
             + OS_INDEX_LARGE
-            + " | head 15000"
+            + " | head "
+            + BAILOUT_SEED_SIZE
             + " | inner join left=d right=f on d.user_id = f.user_id"
             + " [ source="
             + DS_NAME
@@ -328,33 +329,10 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     executeQuery(ppl);
 
     // Collect every CH SQL touching our table from the query_log.
-    List<String> observed = new ArrayList<>();
-    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p);
-        Statement st = c.createStatement()) {
-      st.execute("SYSTEM FLUSH LOGS");
-      try (ResultSet rs =
-          st.executeQuery(
-              "SELECT query FROM system.query_log "
-                  + "WHERE type = 'QueryFinish' "
-                  + "  AND query LIKE '%FROM %`"
-                  + CH_DATABASE
-                  + "`.`"
-                  + CH_TABLE
-                  + "`%' "
-                  + "  AND query NOT LIKE '%system.query_log%' "
-                  + "ORDER BY event_time ASC")) {
-        while (rs.next()) {
-          observed.add(rs.getString(1));
-        }
-      }
+    List<String> observed;
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      observed = readChQueryLogForFedEvents(c);
     }
-
-    StringBuilder dump = new StringBuilder("=== CH query_log (bailout test) ===\n");
-    for (int i = 0; i < observed.size(); i++) {
-      dump.append("[CH SQL ").append(i).append("]\n").append(observed.get(i)).append("\n");
-    }
-    dump.append("=== END query_log (").append(observed.size()).append(" rows) ===");
-    System.out.println(dump);
 
     // Robust assertion: for every CH SQL observed, reject any IN-list on user_id
     // regardless of shape. Matches `user_id IN (<anything except closing paren>)`
@@ -366,13 +344,23 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     // Without the pushdown rule firing, the CH SQL is
     //   SELECT SUM(v), user_id FROM fed.fed_events GROUP BY user_id LIMIT 50000
     // with no WHERE clause at all, so any matcher that rejects `user_id IN (...)`
-    // is correct. Whitespace around `IN` and backticks around `user_id` are
-    // tolerated via `\b` and `\s*`.
+    // is correct. The matcher accepts exactly two word forms for the column
+    // reference: the bare identifier `user_id` (bounded by `\b` on both sides)
+    // and the backtick-quoted form `` `user_id` ``. Whitespace around `IN` is
+    // tolerated via `\s*`.
     Pattern inListOnUserId =
-        Pattern.compile("(?s).*\\buser_id\\b\\s*`?\\s*IN\\s*\\([^)]*\\).*");
+        Pattern.compile("(?s).*(?:\\buser_id\\b|`user_id`)\\s*IN\\s*\\([^)]*\\).*");
+    String dump = dumpObservedSql("CH query_log (bailout test)", observed);
     for (String sql : observed) {
       assertFalse(
-          "At 15000 left rows (> threshold 10000), IN-list pushdown must not fire. Saw:\n" + sql,
+          "At "
+              + BAILOUT_SEED_SIZE
+              + " left rows (> threshold "
+              + CH_IN_LIST_THRESHOLD
+              + "), IN-list pushdown must not fire. Saw:\n"
+              + sql
+              + "\n"
+              + dump,
           inListOnUserId.matcher(sql).matches());
     }
   }
@@ -457,6 +445,57 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   }
 
   // --- helpers ---------------------------------------------------------------
+
+  /** Truncates ClickHouse's {@code system.query_log} so the test only sees fresh SQL. */
+  private static void truncateChQueryLog(Connection ch) throws SQLException {
+    try (Statement st = ch.createStatement()) {
+      st.execute("TRUNCATE TABLE IF EXISTS system.query_log");
+    }
+  }
+
+  /**
+   * Returns every CH SQL in {@code system.query_log} that targets {@code fed.fed_events} from a
+   * finished query, oldest-first. Issues {@code SYSTEM FLUSH LOGS} first so the query_log reflects
+   * writes the current session made. Self-references (SQL that itself reads {@code
+   * system.query_log}) are filtered out.
+   */
+  private static List<String> readChQueryLogForFedEvents(Connection ch) throws SQLException {
+    List<String> observed = new ArrayList<>();
+    try (Statement st = ch.createStatement()) {
+      st.execute("SYSTEM FLUSH LOGS");
+      try (ResultSet rs =
+          st.executeQuery(
+              "SELECT query FROM system.query_log "
+                  + "WHERE type = 'QueryFinish' "
+                  + "  AND query LIKE '%FROM %`"
+                  + CH_DATABASE
+                  + "`.`"
+                  + CH_TABLE
+                  + "`%' "
+                  + "  AND query NOT LIKE '%system.query_log%' "
+                  + "ORDER BY event_time ASC")) {
+        while (rs.next()) {
+          observed.add(rs.getString(1));
+        }
+      }
+    }
+    return observed;
+  }
+
+  /**
+   * Builds a human-readable dump of the observed CH SQL list for use as a JUnit failure message.
+   * Routing this through {@code assertFalse}'s message parameter (rather than {@code
+   * System.out.println}) keeps stdout quiet on green runs — the dump is only surfaced when the
+   * assertion actually fails.
+   */
+  private static String dumpObservedSql(String label, List<String> observed) {
+    StringBuilder dump = new StringBuilder("=== ").append(label).append(" ===\n");
+    for (int i = 0; i < observed.size(); i++) {
+      dump.append("[CH SQL ").append(i).append("]\n").append(observed.get(i)).append("\n");
+    }
+    dump.append("=== END query_log (").append(observed.size()).append(" rows) ===");
+    return dump.toString();
+  }
 
   /** Finds the first CH SQL containing an {@code IN (...)} clause; never null. */
   private static String findInListSql(List<String> observed) {
