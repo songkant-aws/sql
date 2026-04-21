@@ -16,6 +16,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
@@ -254,43 +255,85 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     // shapes prove that the pushdown reached CH; accept any.
     String inListSql = findInListSql(observed);
     assertThat("IN-list pushdown must target user_id", inListSql, containsString("`user_id`"));
-    boolean matchedArrayLiteral = hasInArrayLiteralWithDistinctKeys(inListSql);
-    if (!matchedArrayLiteral) {
-      assertThat(
-          "IN-list pushdown must land at CH as IN (?), IN (1, 3, 5), or IN ([1,3,5])",
-          inListSql,
-          anyOf(
-              containsString("IN (?)"),
-              containsString("IN (1, 3, 5)"),
-              containsString("IN (1,3,5)"),
-              // Tolerate small reorderings from LinkedHashSet-driven distinct iteration.
-              containsString("IN (1, 5, 3)"),
-              containsString("IN (3, 1, 5)"),
-              containsString("IN (3, 5, 1)"),
-              containsString("IN (5, 1, 3)"),
-              containsString("IN (5, 3, 1)")));
-    }
+    assertThat(
+        "IN-list pushdown must land at CH as IN (?), IN (<keys>), or IN ([<keys>])",
+        hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
+        equalTo(true));
   }
 
   /**
-   * Scans {@code sql} for {@code IN ([...])} clauses and returns {@code true} iff at least one
-   * contains a permutation of {@code {1, 3, 5}}. Whitespace around/between elements is tolerated.
-   * The distinctness check rejects degenerate matches like {@code [1,1,1]}.
+   * Returns {@code true} iff {@code sql} contains an IN-list matching any of the three shapes
+   * accepted by this test suite, with distinct keys drawn from {@code expectedKeys}:
    *
-   * <p>This is the post-bind render produced by clickhouse-jdbc 0.6.5 when the driver
-   * client-side-interpolates a {@link java.sql.Array} (or {@code Object[]}) bound parameter into
-   * the SQL text before shipping to the server — a valid parametric-pushdown shape.
+   * <ul>
+   *   <li>{@code IN (?)} &mdash; the driver forwarded the PreparedStatement's placeholder;
+   *   <li>{@code IN (k1, k2, k3)} &mdash; the driver inlined small scalar params;
+   *   <li>{@code IN ([k1, k2, k3])} &mdash; the post-bind render produced by clickhouse-jdbc 0.6.5
+   *       when it client-side-interpolates a bound array into the SQL text.
+   * </ul>
+   *
+   * <p>Whitespace around brackets, parentheses, and commas is tolerated. For the enumerated shapes,
+   * distinctness across all positions is enforced via a post-match set check so degenerate inputs
+   * like {@code IN (1,1,1)} fail the assertion. Shape {@code IN (?)} carries no keys to compare, so
+   * it matches unconditionally when the expected set is non-empty.
+   *
+   * <p>This unifies the previous {@code anyOf(containsString(...))} permutation enumeration and the
+   * array-literal regex into one consistent check that scales to any {@code expectedKeys} set
+   * without exponential blowup in permutation count. See the {@code IN ([...])} comment on the
+   * caller for the clickhouse-jdbc 0.6.5 client-side-interpolation rationale.
    */
-  static boolean hasInArrayLiteralWithDistinctKeys(String sql) {
-    Pattern p =
-        Pattern.compile(
-            "IN\\s*\\(\\s*\\[\\s*(1|3|5)\\s*,\\s*(1|3|5)\\s*,\\s*(1|3|5)\\s*\\]\\s*\\)");
-    Matcher m = p.matcher(sql);
+  static boolean hasParametricInFormWithDistinctKeys(String sql, Set<Integer> expectedKeys) {
+    // Shape 1: the bare placeholder.
+    if (Pattern.compile("IN\\s*\\(\\s*\\?\\s*\\)").matcher(sql).find()) {
+      return true;
+    }
+    // Build a disjunction of the expected key tokens, e.g. "(1|3|5)". Keys are integers so no
+    // regex-escaping is needed. For the enumerated shapes we require exactly N groups where N is
+    // expectedKeys.size(), because both the inlined-scalar and inlined-array renders emit all
+    // distinct keys exactly once.
+    int n = expectedKeys.size();
+    StringBuilder alt = new StringBuilder("(");
+    boolean first = true;
+    for (Integer k : expectedKeys) {
+      if (!first) {
+        alt.append('|');
+      }
+      alt.append(k);
+      first = false;
+    }
+    alt.append(')');
+
+    StringBuilder scalarForm = new StringBuilder("IN\\s*\\(\\s*");
+    StringBuilder arrayForm = new StringBuilder("IN\\s*\\(\\s*\\[\\s*");
+    for (int i = 0; i < n; i++) {
+      if (i > 0) {
+        scalarForm.append("\\s*,\\s*");
+        arrayForm.append("\\s*,\\s*");
+      }
+      scalarForm.append(alt);
+      arrayForm.append(alt);
+    }
+    scalarForm.append("\\s*\\)");
+    arrayForm.append("\\s*\\]\\s*\\)");
+
+    // Shape 2 (inlined scalars) and shape 3 (inlined array literal): require distinctness.
+    return matchesWithDistinctGroups(sql, Pattern.compile(scalarForm.toString()), n)
+        || matchesWithDistinctGroups(sql, Pattern.compile(arrayForm.toString()), n);
+  }
+
+  /**
+   * Returns {@code true} iff {@code sql} contains a match of {@code pattern} whose {@code
+   * groupCount} capture groups are all distinct. Rejects degenerate inputs like {@code IN (1, 1,
+   * 1)}.
+   */
+  private static boolean matchesWithDistinctGroups(String sql, Pattern pattern, int groupCount) {
+    Matcher m = pattern.matcher(sql);
     while (m.find()) {
-      String a = m.group(1);
-      String b = m.group(2);
-      String c = m.group(3);
-      if (!a.equals(b) && !a.equals(c) && !b.equals(c)) {
+      Set<String> groups = new LinkedHashSet<>();
+      for (int g = 1; g <= groupCount; g++) {
+        groups.add(m.group(g));
+      }
+      if (groups.size() == groupCount) {
         return true;
       }
     }

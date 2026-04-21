@@ -4,6 +4,7 @@
  */
 package org.opensearch.sql.clickhouse.calcite.federation;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -21,7 +22,9 @@ import org.apache.calcite.adapter.jdbc.JdbcSchema;
 import org.apache.calcite.adapter.jdbc.JdbcTableScan;
 import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
 import org.apache.calcite.avatica.Meta;
+import org.apache.calcite.linq4j.AbstractEnumerable;
 import org.apache.calcite.linq4j.Enumerable;
+import org.apache.calcite.linq4j.Enumerator;
 import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.plan.volcano.RelSubset;
@@ -151,42 +154,144 @@ public final class SideInputBindableWrapper implements PreparedResult {
     // driver-supported shape proven end-to-end by ClickHouseArrayBindSpikeIT. If we can't
     // get a Connection (or createArrayOf throws), fall back to the raw Object[] path, which
     // clickhouse-jdbc 0.6.5 accepts via setObject as a client-side-interpolated array literal.
-    Object paramValue = wrapAsSqlArrayIfPossible(rightDs, drained.distinctKeys());
+    //
+    // Array lifecycle: per the JDBC spec, a {@link java.sql.Array} "may be released" when its
+    // owning {@link Connection} is closed. We therefore keep the owning connection open until
+    // the consuming enumeration finishes, then close it together with the enumerator. This
+    // avoids relying on driver-specific client-side interpolation timing (clickhouse-jdbc
+    // 0.6.5 happens to read the array contents eagerly at bind, but that's a driver behaviour,
+    // not a JDBC guarantee). See {@link #closingOnEnumeratorClose}.
+    SqlArrayBinding binding = wrapAsSqlArrayIfPossible(rightDs, drained.distinctKeys());
+    Object paramValue = binding != null ? binding.array : drained.distinctKeys();
     DataContext bound = bindInListParam(ctx, paramValue);
-    return inner.bind(bound);
+    Enumerable<Object> boundEnumerable = inner.bind(bound);
+    if (binding != null && binding.connection != null) {
+      return closingOnEnumeratorClose(boundEnumerable, binding.connection);
+    }
+    return boundEnumerable;
+  }
+
+  /**
+   * Wraps {@code inner} so that its enumerator's {@code close()} also closes {@code conn}. This
+   * keeps the {@link Connection} that owns the bound {@link java.sql.Array} open for the
+   * duration of the downstream enumeration &mdash; {@link
+   * org.apache.calcite.runtime.ResultSetEnumerable#setDynamicParam} binds the array on
+   * enumerator construction, then reads rows via the driver's own (separate) connection &mdash;
+   * then releases it during enumerator teardown. This respects the JDBC spec for {@code Array}
+   * lifetime without requiring any {@code PreparedResult}-level hook (which Calcite doesn't
+   * expose).
+   */
+  private static Enumerable<Object> closingOnEnumeratorClose(
+      Enumerable<Object> inner, Connection conn) {
+    return new AbstractEnumerable<Object>() {
+      @Override
+      public Enumerator<Object> enumerator() {
+        final Enumerator<Object> delegateEnum = inner.enumerator();
+        return new Enumerator<Object>() {
+          @Override
+          public Object current() {
+            return delegateEnum.current();
+          }
+
+          @Override
+          public boolean moveNext() {
+            return delegateEnum.moveNext();
+          }
+
+          @Override
+          public void reset() {
+            delegateEnum.reset();
+          }
+
+          @Override
+          public void close() {
+            try {
+              delegateEnum.close();
+            } finally {
+              try {
+                conn.close();
+              } catch (SQLException e) {
+                LOG.debug(
+                    "SideInputBindableWrapper: failed to close array-owning connection on"
+                        + " enumerator close",
+                    e);
+              }
+            }
+          }
+        };
+      }
+    };
+  }
+
+  /**
+   * Holds a {@link java.sql.Array} together with the {@link Connection} that created it. Per the
+   * JDBC spec an {@code Array} "may be released" when its owning connection is closed, so the
+   * caller must keep {@link #connection} open for the lifetime of any bind/execute that uses
+   * {@link #array}, and close it during enumerator teardown.
+   */
+  static final class SqlArrayBinding {
+    final java.sql.Array array;
+    final Connection connection;
+
+    SqlArrayBinding(java.sql.Array array, Connection connection) {
+      this.array = array;
+      this.connection = connection;
+    }
   }
 
   /**
    * Attempts to wrap {@code distinctKeys} as a {@link java.sql.Array} using a {@link Connection}
-   * obtained from {@code ds}. On any failure (no DataSource, {@link SQLException} from
-   * {@link Connection#createArrayOf}, unsupported feature, etc.), returns the raw {@code Object[]}
-   * unchanged — this preserves the working {@code setObject(Object[])} path as a safety net.
+   * obtained from {@code ds}. On success, returns a {@link SqlArrayBinding} holding both the
+   * array and the owning connection &mdash; the caller is responsible for closing the connection
+   * after the bound parameter has been consumed (see {@link #closingOnEnumeratorClose}). Returns
+   * {@code null} on any failure (no DataSource, empty keys, unsupported type, {@link
+   * SQLException} from {@link Connection#createArrayOf}, etc.), which signals the caller to fall
+   * back to the raw {@code Object[]} path &mdash; that path does not hold a connection and
+   * flows through {@code PreparedStatement.setObject}.
+   *
+   * <p><b>Connection lifetime:</b> earlier revisions of this method opened the connection inside
+   * a try-with-resources block and closed it before returning the {@code Array}. That worked
+   * empirically against clickhouse-jdbc 0.6.5 because the driver client-side-interpolates bound
+   * arrays into the SQL text at {@code setObject}/{@code setArray} time (so the array's contents
+   * are read before the connection closes), but per the JDBC spec an {@code Array} may be
+   * released when its owning connection closes &mdash; i.e. relying on the driver's eager read
+   * was driver-specific and would silently corrupt bindings on any spec-conformant driver that
+   * holds the array's backing buffer server-side. The connection is therefore now held alive
+   * until enumerator teardown.
    *
    * <p>The SQL type name passed to {@code createArrayOf} is chosen from the runtime Java class of
    * the first non-null element. This is a heuristic for the feature's first cut: the exhaustive
    * mapping (Calcite {@link RelDataType} → dialect-specific SQL type name) is handled
    * dialect-side via {@link PplFederationDialect} in future tasks.
    */
-  private static Object wrapAsSqlArrayIfPossible(DataSource ds, Object[] distinctKeys) {
+  private static SqlArrayBinding wrapAsSqlArrayIfPossible(DataSource ds, Object[] distinctKeys) {
     if (ds == null || distinctKeys == null || distinctKeys.length == 0) {
-      return distinctKeys;
+      return null;
     }
     String sqlTypeName = inferSqlTypeName(distinctKeys);
     if (sqlTypeName == null) {
-      return distinctKeys;
+      return null;
     }
-    // Use a short-lived connection solely to construct the java.sql.Array. The array holds only
-    // its values once created; closing the connection here does not invalidate the array for
-    // subsequent use inside ResultSetEnumerable (which opens its own connection for the prepared
-    // statement). This matches the pattern in ClickHouseArrayBindSpikeIT.
-    try (Connection conn = ds.getConnection()) {
-      return conn.createArrayOf(sqlTypeName, distinctKeys);
+    Connection conn = null;
+    try {
+      conn = ds.getConnection();
+      java.sql.Array array = conn.createArrayOf(sqlTypeName, distinctKeys);
+      return new SqlArrayBinding(array, conn);
     } catch (SQLException | RuntimeException e) {
       LOG.debug(
           "SideInputBindableWrapper: createArrayOf({}) failed; falling back to Object[] bind",
           sqlTypeName,
           e);
-      return distinctKeys;
+      if (conn != null) {
+        try {
+          conn.close();
+        } catch (SQLException closeErr) {
+          LOG.debug(
+              "SideInputBindableWrapper: failed to close connection after createArrayOf failure",
+              closeErr);
+        }
+      }
+      return null;
     }
   }
 
@@ -195,7 +300,8 @@ public final class SideInputBindableWrapper implements PreparedResult {
    * {@link Connection#createArrayOf}. Returns {@code null} if no element has a supported type, in
    * which case the caller falls back to the {@code Object[]} path.
    */
-  private static String inferSqlTypeName(Object[] distinctKeys) {
+  @VisibleForTesting
+  static String inferSqlTypeName(Object[] distinctKeys) {
     for (Object v : distinctKeys) {
       if (v == null) {
         continue;

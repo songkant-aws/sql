@@ -4,6 +4,7 @@
  */
 package org.opensearch.sql.clickhouse.calcite.federation;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.util.ArrayList;
 import java.util.List;
 import org.apache.calcite.adapter.enumerable.EnumerableHashJoin;
@@ -209,7 +210,8 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
    * RelMdMaxRowCount} still returns the {@code Sort.fetch} value (which is what {@code | head N}
    * produces upstream).
    */
-  private static long determineBoundedSize(Join join) {
+  @VisibleForTesting
+  static long determineBoundedSize(Join join) {
     RelHint hint = findBoundedLeftHint(join);
     if (hint != null) {
       String sizeStr = hint.kvOptions.get(BoundedJoinHintRule.HINT_SIZE_KEY);
@@ -262,6 +264,7 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
    * slot since {@code EnumerableLimit} extends {@code Sort}. Stops on the first branching/fan-out
    * node and returns {@code -1L} rather than guessing. Public for use by the runtime wrapper.
    */
+  @VisibleForTesting
   static long walkForStaticFetch(RelNode root) {
     RelNode cur = unwrap(root);
     while (cur != null) {
@@ -342,7 +345,8 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
    * Exotic aliasing at the top of the right subtree (where the key column name differs from the
    * scan's) is left as a no-op; the standard join path then handles the query.
    */
-  private static int mapRightKeyToScan(RelNode rightTop, int rightTopIdx, JdbcTableScan scan) {
+  @VisibleForTesting
+  static int mapRightKeyToScan(RelNode rightTop, int rightTopIdx, JdbcTableScan scan) {
     String name = rightTop.getRowType().getFieldList().get(rightTopIdx).getName();
     List<RelDataTypeField> scanFields = scan.getRowType().getFieldList();
     for (int i = 0; i < scanFields.size(); i++) {
