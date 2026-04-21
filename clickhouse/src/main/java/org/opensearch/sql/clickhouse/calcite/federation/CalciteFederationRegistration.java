@@ -17,6 +17,9 @@ public final class CalciteFederationRegistration {
   public static void ensureRegistered() {
     if (DONE.compareAndSet(false, true)) {
       CalciteToolsHelper.registerVolcanoRule(SideInputInListRule.INSTANCE);
+      // Tier-2 HEP rewrites
+      CalciteToolsHelper.registerHepRule(
+          org.opensearch.sql.clickhouse.calcite.pushdown.SpanBucketToStdOpRule.INSTANCE);
       SideInputBindableHookRegistry.register(SideInputBindableWrapper::maybeWrap);
     }
   }
