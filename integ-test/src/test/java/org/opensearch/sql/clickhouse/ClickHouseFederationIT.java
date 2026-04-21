@@ -365,6 +365,51 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Non-aggregated right side: no stats on the CH sub-search. SideInputInListRule's
+  // step-8 check for an aggregate on the right subtree is advisory — on miss it logs
+  // a WARN about potential row fan-out and proceeds anyway, relying on the upstream
+  // JOIN_SUBSEARCH_MAXOUT cap (default 50k) to bound the result. Correctness only:
+  // verify the query still executes and emits join output covering each seeded left
+  // user_id. The WARN itself is informational; we don't assert on log output here.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void testNonAggRightSideLogsWarning() throws Exception {
+    String ppl =
+        "source="
+            + OS_INDEX
+            + " | head 3"
+            + " | inner join left=d right=f on d.user_id = f.user_id"
+            + " [ source="
+            + DS_NAME
+            + "."
+            + CH_DATABASE
+            + "."
+            + CH_TABLE
+            + " ]";
+    JSONObject j = executeQuery(ppl);
+
+    // Result correctness: datarows must include each seeded left user_id. Parse
+    // via schema-driven column lookup (datarows are positional arrays, not keyed
+    // objects) so the check is robust to column ordering.
+    JSONArray rows = j.getJSONArray("datarows");
+    Set<Integer> observedUserIds = new HashSet<>();
+    int userIdCol = findUserIdColumn(j);
+    for (int i = 0; i < rows.length(); i++) {
+      observedUserIds.add(rows.getJSONArray(i).getInt(userIdCol));
+    }
+    assertTrue(
+        "non-agg right side: user_id=1 must be present. Got: " + observedUserIds,
+        observedUserIds.contains(1));
+    assertTrue(
+        "non-agg right side: user_id=3 must be present. Got: " + observedUserIds,
+        observedUserIds.contains(3));
+    assertTrue(
+        "non-agg right side: user_id=5 must be present. Got: " + observedUserIds,
+        observedUserIds.contains(5));
+  }
+
   /**
    * Returns {@code true} iff {@code sql} contains an IN-list matching any of the three shapes
    * accepted by this test suite, with distinct keys drawn from {@code expectedKeys}:
