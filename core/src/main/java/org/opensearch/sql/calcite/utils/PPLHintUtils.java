@@ -12,6 +12,7 @@ import org.apache.calcite.rel.hint.HintStrategyTable;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.tools.RelBuilder;
+import org.opensearch.sql.calcite.planner.logical.rules.BoundedJoinHintRule;
 
 @UtilityClass
 public class PPLHintUtils {
@@ -26,7 +27,7 @@ public class PPLHintUtils {
               (hint, rel) -> {
                 return rel instanceof LogicalAggregate;
               })
-          .hintStrategy("bounded_left", HintPredicates.JOIN)
+          .hintStrategy(BoundedJoinHintRule.HINT_NAME, HintPredicates.JOIN)
           // add more here
           .build();
 

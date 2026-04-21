@@ -28,6 +28,7 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlDialect;
 import org.immutables.value.Value;
+import org.opensearch.sql.calcite.planner.logical.rules.BoundedJoinHintRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,7 +80,7 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     // 2. parse size from hint kvOptions
     long hintSize;
     try {
-      String sizeStr = boundedHint.kvOptions.get("size");
+      String sizeStr = boundedHint.kvOptions.get(BoundedJoinHintRule.HINT_SIZE_KEY);
       if (sizeStr == null) {
         return;
       }
@@ -144,6 +145,8 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
     RelDataType keyType = scan.getRowType().getFieldList().get(rightKeyIdx).getType();
     RelDataType arrayType = typeFactory.createArrayType(keyType, -1);
+    // Index 0 reserved for bounded-left IN-list binding; Task 12's runtime binder relies on this.
+    // Don't reuse index 0 for any other federation rule without updating the binder contract.
     RexDynamicParam arrayParam = rexBuilder.makeDynamicParam(arrayType, 0);
 
     // 10. wrap the scan with a JdbcSideInputFilter and rebuild the parent chain
@@ -173,7 +176,7 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
 
   private static RelHint findBoundedLeftHint(Join join) {
     for (RelHint h : join.getHints()) {
-      if ("bounded_left".equals(h.hintName)) {
+      if (BoundedJoinHintRule.HINT_NAME.equals(h.hintName)) {
         return h;
       }
     }

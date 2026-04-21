@@ -25,6 +25,9 @@ import org.immutables.value.Value;
 @Value.Enclosing
 public final class BoundedJoinHintRule extends RelRule<BoundedJoinHintRule.Config> {
 
+  public static final String HINT_NAME = "bounded_left";
+  public static final String HINT_SIZE_KEY = "size";
+
   /** Ceiling used for hint attachment; should be &ge; the largest dialect-specific threshold. */
   static final long CEILING = 10_000L;
 
@@ -37,7 +40,7 @@ public final class BoundedJoinHintRule extends RelRule<BoundedJoinHintRule.Confi
   @Override
   public void onMatch(RelOptRuleCall call) {
     Join join = call.rel(0);
-    if (join.getHints().stream().anyMatch(h -> h.hintName.equals("bounded_left"))) {
+    if (join.getHints().stream().anyMatch(h -> h.hintName.equals(HINT_NAME))) {
       return;
     }
     // strip() unwraps planner-internal decorators (e.g. HepRelVertex) before analysis.
@@ -46,7 +49,7 @@ public final class BoundedJoinHintRule extends RelRule<BoundedJoinHintRule.Confi
       return;
     }
     RelHint hint =
-        RelHint.builder("bounded_left").hintOption("size", bound.get().toString()).build();
+        RelHint.builder(HINT_NAME).hintOption(HINT_SIZE_KEY, bound.get().toString()).build();
     List<RelHint> newHints = new ArrayList<>(join.getHints());
     newHints.add(hint);
     call.transformTo(join.withHints(newHints));
