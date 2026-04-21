@@ -54,7 +54,9 @@ jobs:
           if [ "${{ matrix.test-type }}" = "unit" ]; then
             su `id -un 1000` -c "./gradlew --continue build -x integTest -x yamlRestTest -x doctest"
           elif [ "${{ matrix.test-type }}" = "integration" ]; then
-            su `id -un 1000` -c "./gradlew --continue integTest yamlRestTest"
+            # Linux CI: no Docker-in-Docker, so drive ClickHouse IT via the binary-mode
+            # Gradle tasks (startClickhouse / stopClickhouse), not Testcontainers.
+            su `id -un 1000` -c "./gradlew --continue integTest yamlRestTest -DuseClickhouseBinary=true"
           else
             su `id -un 1000` -c "./gradlew --continue doctest"
           fi
@@ -132,7 +134,12 @@ jobs:
           if [ "${{ matrix.test-type }}" = "unit" ]; then
             ./gradlew --continue build -x integTest -x yamlRestTest -x doctest ${{ matrix.entry.os_build_args }}
           elif [ "${{ matrix.test-type }}" = "integration" ]; then
-            ./gradlew --continue integTest yamlRestTest ${{ matrix.entry.os_build_args }}
+            # macOS/Windows CI: macOS has no reliable Testcontainers/Docker; drive CH via the
+            # binary-mode Gradle tasks. Windows is intentionally skipped by the Gradle task
+            # itself (non-POSIX + no `pgrep`/`kill` semantics the tasks rely on), so passing
+            # -DuseClickhouseBinary=true on Windows is harmless — startClickhouse is gated
+            # on `getOSFamilyType() != "windows"` in integ-test/build.gradle.
+            ./gradlew --continue integTest yamlRestTest -DuseClickhouseBinary=true ${{ matrix.entry.os_build_args }}
           else
             ./gradlew --continue doctest ${{ matrix.entry.os_build_args }}
           fi

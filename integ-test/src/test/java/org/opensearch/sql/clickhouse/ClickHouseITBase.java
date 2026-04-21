@@ -5,10 +5,12 @@
 
 package org.opensearch.sql.clickhouse;
 
+import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.rules.ExternalResource;
 import org.junit.rules.TestRule;
 import org.opensearch.sql.ppl.PPLIntegTestCase;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 
 /**
@@ -24,26 +26,64 @@ import org.testcontainers.clickhouse.ClickHouseContainer;
  *       integ-test/src/test/resources/clickhouse/users.xml}.
  * </ul>
  *
- * Subclasses call {@link #chJdbcUrl()}, {@link #chUser()}, and {@link #chPassword()} instead of
+ * <p>On CI hosts without Docker (e.g. Windows GitHub-hosted runners) AND without binary mode, all
+ * subclass tests are skipped via {@code Assume} rather than failing — this lets the surrounding
+ * {@code :integ-test:integTest} job stay green instead of failing on every {@code ClickHouse*IT}'s
+ * {@code @ClassRule} init.
+ *
+ * <p>Subclasses call {@link #chJdbcUrl()}, {@link #chUser()}, and {@link #chPassword()} instead of
  * reaching through {@link #CH}.
  */
 public abstract class ClickHouseITBase extends PPLIntegTestCase {
 
+  /** True when running with the external binary-mode server managed by gradle. */
+  private static final boolean BINARY_MODE =
+      "true".equals(System.getProperty("useClickhouseBinary"));
+
+  /**
+   * True when neither binary mode nor a usable Docker daemon is available. In that case the {@link
+   * #CH} class rule is a no-op and {@link #skipIfNoClickhouse()} aborts every test via {@code
+   * Assume}. This is the only configuration that yields a SKIP rather than a FAIL, and it is
+   * intentional — a green-but-skipped state tells CI "there is nothing to test here" instead of
+   * "something regressed."
+   */
+  private static final boolean CLICKHOUSE_UNAVAILABLE = !BINARY_MODE && !isDockerAvailable();
+
+  private static boolean isDockerAvailable() {
+    try {
+      // Testcontainers' own liveness probe; returns false (does not throw) when the daemon
+      // is absent or unresponsive on this host.
+      return DockerClientFactory.instance().isDockerAvailable();
+    } catch (Throwable ignored) {
+      return false;
+    }
+  }
+
   /**
    * ClickHouseContainer instance in Testcontainers mode; a no-op resource in binary mode (the
-   * gradle task already owns the server lifecycle).
+   * gradle task already owns the server lifecycle) OR when Docker is unavailable (tests will be
+   * skipped in {@link #skipIfNoClickhouse()}).
    */
   @ClassRule
   public static final TestRule CH =
-      "true".equals(System.getProperty("useClickhouseBinary"))
+      (BINARY_MODE || CLICKHOUSE_UNAVAILABLE)
           ? new ExternalResource() {
-            // no-op: clickhouse lifecycle is managed by gradle's startClickhouse / stopClickhouse
+            // no-op: in binary mode the gradle task owns lifecycle; in the unavailable case
+            // every @Test is skipped before it runs so we never need a real server.
           }
           : new ClickHouseContainer("clickhouse/clickhouse-server:24.3")
               .withPassword("test")
               // clickhouse-jdbc 0.6.5 defaults to LZ4 compression; suppress it so the
               // internal Testcontainers JDBC health-check does not need LZ4 on the classpath.
               .withUrlParam("compress", "0");
+
+  @BeforeClass
+  public static void skipIfNoClickhouse() {
+    org.junit.Assume.assumeFalse(
+        "ClickHouse is unavailable on this host (no Docker daemon and useClickhouseBinary=false);"
+            + " skipping ClickHouse IT",
+        CLICKHOUSE_UNAVAILABLE);
+  }
 
   /**
    * JDBC URL that resolves to the active ClickHouse instance. Always includes {@code compress=0}
