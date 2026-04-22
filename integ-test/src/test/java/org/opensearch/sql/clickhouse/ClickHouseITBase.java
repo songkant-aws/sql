@@ -5,6 +5,8 @@
 
 package org.opensearch.sql.clickhouse;
 
+import java.io.IOException;
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.rules.ExternalResource;
@@ -83,6 +85,28 @@ public abstract class ClickHouseITBase extends PPLIntegTestCase {
         "ClickHouse is unavailable on this host (no Docker daemon and useClickhouseBinary=false);"
             + " skipping ClickHouse IT",
         CLICKHOUSE_UNAVAILABLE);
+  }
+
+  /**
+   * Guarded cleanup that hides {@link org.opensearch.sql.legacy.SQLIntegTestCase#cleanUpIndices()}.
+   *
+   * <p>When {@link #CLICKHOUSE_UNAVAILABLE} is true, {@link #skipIfNoClickhouse()} aborts the class
+   * via {@code Assume} before JUnit runs any {@code @Before}/{@code initClient} lifecycle. JUnit
+   * still executes every {@code @AfterClass} it finds in the class hierarchy, however — including
+   * the parent's {@code cleanUpIndices()} which calls {@code client.performRequest(...)} on a
+   * static REST client that was never initialized. That NPE gets wrapped into {@code
+   * TestCouldNotBeSkippedException: Test could not be skipped due to other failures}, turning every
+   * intended SKIP into a FAIL on macOS/Windows runners. Declaring the same method with
+   * {@code @AfterClass} here hides the parent's (Java static-method hiding + JUnit's {@code
+   * TestClass.addToClassMap} dedup), so only this guarded version runs.
+   */
+  @AfterClass
+  public static void cleanUpIndices() throws IOException {
+    if (CLICKHOUSE_UNAVAILABLE) {
+      // No cluster interactions happened; nothing to clean up.
+      return;
+    }
+    org.opensearch.sql.legacy.SQLIntegTestCase.cleanUpIndices();
   }
 
   /**
