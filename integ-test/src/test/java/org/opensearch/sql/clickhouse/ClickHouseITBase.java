@@ -97,23 +97,37 @@ public abstract class ClickHouseITBase extends PPLIntegTestCase {
    * JDBC URL that resolves to the active ClickHouse instance. Always includes {@code compress=0}
    * because the ClickHouse JDBC 0.6.5 default (LZ4) requires extra classpath deps and adds no value
    * for IT correctness.
+   *
+   * <p>When ClickHouse is unavailable, returns a placeholder so subclass {@code @After} hooks
+   * (which JUnit runs even on tests skipped via {@code Assume}) don't {@code ClassCastException}
+   * the no-op {@link #CH} fallback. The actual test body is guarded by {@link
+   * #skipIfNoClickhouse()}; the placeholder never reaches a real driver call.
    */
   protected static String chJdbcUrl() {
-    if ("true".equals(System.getProperty("useClickhouseBinary"))) {
+    if (CLICKHOUSE_UNAVAILABLE) {
+      return "jdbc:ch://unavailable";
+    }
+    if (BINARY_MODE) {
       return "jdbc:ch://127.0.0.1:18123/default?compress=0";
     }
     return ((ClickHouseContainer) CH).getJdbcUrl() + "?compress=0";
   }
 
   protected static String chUser() {
-    if ("true".equals(System.getProperty("useClickhouseBinary"))) {
+    if (CLICKHOUSE_UNAVAILABLE) {
+      return "unavailable";
+    }
+    if (BINARY_MODE) {
       return "default";
     }
     return ((ClickHouseContainer) CH).getUsername();
   }
 
   protected static String chPassword() {
-    if ("true".equals(System.getProperty("useClickhouseBinary"))) {
+    if (CLICKHOUSE_UNAVAILABLE) {
+      return "unavailable";
+    }
+    if (BINARY_MODE) {
       // Must match src/test/resources/clickhouse/users.xml. A non-blank password
       // is required because the connector rejects basic auth with blank password.
       return "test";
