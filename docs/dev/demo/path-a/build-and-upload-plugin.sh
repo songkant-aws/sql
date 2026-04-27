@@ -71,7 +71,16 @@ log "Building plugin (this may take a few minutes)..."
 # The Gradle project name is 'opensearch-sql-plugin' (see settings.gradle);
 # the on-disk directory is 'plugin/'. bundlePlugin is the canonical task
 # that produces the installable zip (integ-test also depends on it).
-./gradlew :opensearch-sql-plugin:bundlePlugin
+#
+# Default build produces opensearch-sql-<OS>.0-SNAPSHOT.zip which OS plugin
+# loader refuses to install into a release OpenSearch container. We build
+# against the OS version that matches the stock Docker image tag and with
+# build.snapshot=false so the zip comes out named .zip (no -SNAPSHOT
+# suffix) and plugin-descriptor.properties declares a release version.
+OS_TARGET_VERSION="${OS_TARGET_VERSION:-3.6.0}"
+./gradlew :opensearch-sql-plugin:bundlePlugin \
+  -Dopensearch.version="$OS_TARGET_VERSION" \
+  -Dbuild.snapshot=false
 
 # ------------------------------------------------------------
 # 2. Locate the freshly-built zip
