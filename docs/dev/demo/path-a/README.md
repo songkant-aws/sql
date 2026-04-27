@@ -97,10 +97,18 @@ cd /mnt/ebs/work/path-a
   "all-in-OS ingest cost" story
 - Force merge: ~15-30 min
 
+Per-phase wall-clock times are recorded automatically to
+`/mnt/ebs/work/ingest-timings.txt` (override with `TIMINGS_FILE=...`).
+The file is overwritten each run. Columns: phase name, start epoch, end
+epoch, seconds, human-readable duration. A trailing section records final
+index sizes and disk usage. This is the file to paste into demo write-ups.
+
 You can safely run `ingest.sh` under `nohup`/`tmux`/`screen` and disconnect:
 ```bash
 nohup ./ingest.sh > ingest.log 2>&1 &
 tail -f ingest.log
+# after it finishes, the summary is in:
+cat /mnt/ebs/work/ingest-timings.txt
 ```
 
 ### 6. Run the benchmark query
@@ -114,25 +122,30 @@ This produces cold + warm latencies for the full PPL query.
 
 ### 7. Capture the headline numbers
 
-After ingest completes:
+After ingest completes, the key artifacts are:
+
+- **`/mnt/ebs/work/ingest-timings.txt`** — per-phase wall-clock times and
+  final index state. Paste directly into the demo write-up.
+- **`query-results.txt`** (step 6) — cold + warm query latencies.
+
+Extra ad-hoc probes if you want more detail:
 
 ```bash
-# Index sizes
-curl -s 'http://127.0.0.1:9200/_cat/indices/products,reviews?v&h=index,docs.count,store.size'
-
-# Host disk usage
-df -h /mnt/ebs
-
 # OS heap / GC state
 curl -s 'http://127.0.0.1:9200/_nodes/stats/jvm?pretty' | \
   python3 -c 'import json,sys; d=json.load(sys.stdin); \
     [print(n["jvm"]["mem"]["heap_used_percent"], "%") for n in d["nodes"].values()]'
+
+# Cumulative indexing stats (total time OS spent on bulk writes)
+curl -s 'http://127.0.0.1:9200/_nodes/stats/indices/indexing?pretty' | \
+  python3 -c 'import json,sys; d=json.load(sys.stdin); \
+    [print(n["indices"]["indexing"]) for n in d["nodes"].values()]'
 ```
 
-Record:
-- Ingest wall-clock time (from `ingest.log`)
-- Final `store.size` for reviews
-- Cold-run latency, warm-run median latency from `query-results.txt`
+Record for the demo:
+- Ingest wall-clock time breakdown (from `ingest-timings.txt`)
+- Final `store.size` for reviews (from `ingest-timings.txt` footer)
+- Cold-run latency, warm-run median latency (from `query-results.txt`)
 - Any circuit breaker trips (query.sh reports these)
 
 ## Teardown
