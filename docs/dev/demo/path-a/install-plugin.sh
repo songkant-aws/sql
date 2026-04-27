@@ -65,7 +65,9 @@ PLUGIN_VERSION_NO_SNAPSHOT="${PLUGIN_VERSION%-SNAPSHOT}"
 PLUGIN_OS_VERSION="${PLUGIN_VERSION_NO_SNAPSHOT%.*}"
 
 OS_RUNNING_VERSION=$(curl -s "$OS_URL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["number"])')
-OS_RUNNING_SNAPSHOT=$(curl -s "$OS_URL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["build_snapshot"])')
+# Normalize Python's True/False to bash-style lowercase so the comparison
+# below ("true" vs "false") works on both sides.
+OS_RUNNING_SNAPSHOT=$(curl -s "$OS_URL" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["version"]["build_snapshot"]).lower())')
 
 log "Plugin zip: $ZIP_BASENAME"
 log "  => OS version extracted: $PLUGIN_OS_VERSION"
@@ -92,7 +94,7 @@ if [ "$PLUGIN_IS_SNAPSHOT" != "$OS_RUNNING_SNAPSHOT" ]; then
   echo "       OpenSearch build_snapshot=$OS_RUNNING_SNAPSHOT."
   echo "       OpenSearch refuses to install a SNAPSHOT plugin into a"
   echo "       release OS (or vice versa). Rebuild with:"
-  if [ "$OS_RUNNING_SNAPSHOT" = "False" ] || [ "$OS_RUNNING_SNAPSHOT" = "false" ]; then
+  if [ "$OS_RUNNING_SNAPSHOT" = "false" ]; then
     echo "         ./gradlew :opensearch-sql-plugin:bundlePlugin \\"
     echo "             -Dopensearch.version=${OS_RUNNING_VERSION} \\"
     echo "             -Dbuild.snapshot=false"
