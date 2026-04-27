@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 # EC2 user-data bootstrap for Path A (all-in-OpenSearch demo).
-# Paste this into the EC2 "User data" field when launching the instance.
 #
-# Assumes: Amazon Linux 2023, root execution (user-data runs as root).
-# Sets up: Docker, a single-node OpenSearch 2.15 with 24GB heap, no security,
-# bound to 127.0.0.1:9200. Uses /mnt/ebs for all data (expects a gp3 volume
-# at /dev/nvme1n1).
+# Two-stage: the EC2 user-data field runs this script as root at launch. It
+# installs Docker, formats the data volume, and starts OpenSearch 3.6.0
+# WITHOUT the federation plugin. The second stage (install-plugin.sh) runs
+# after you scp the plugin zip to the instance.
+#
+# Why split: the federation SQL plugin zip lives on your laptop (produced by
+# `./gradlew :plugin:assemble`) and there is no common way to make user-data
+# fetch it without hard-coding an S3 bucket. We stop here, let you upload,
+# then run stage 2.
+#
+# OS version: 3.6.0 matches the `opensearch_version = 3.6.0-SNAPSHOT`
+# declared in the feat/ppl-federation branch's root build.gradle. The plugin
+# zip built from this branch is named opensearch-sql-3.6.0.0-SNAPSHOT.zip
+# and only installs on OS 3.6.x.
+#
+# Assumes: Amazon Linux 2023, root execution.
 
 set -euxo pipefail
 
@@ -49,9 +60,9 @@ EOF
 sysctl --system
 
 # ------------------------------------------------------------
-# 4. Start OpenSearch container
+# 4. Start OpenSearch container (3.6.0, matches feat/ppl-federation)
 # ------------------------------------------------------------
-docker pull opensearchproject/opensearch:2.15.0
+docker pull opensearchproject/opensearch:3.6.0
 
 docker rm -f os 2>/dev/null || true
 docker run -d \
@@ -66,7 +77,7 @@ docker run -d \
   --ulimit memlock=-1:-1 \
   --ulimit nofile=65536:65536 \
   -v /mnt/ebs/os-data:/usr/share/opensearch/data \
-  opensearchproject/opensearch:2.15.0
+  opensearchproject/opensearch:3.6.0
 
 # ------------------------------------------------------------
 # 5. Wait for OS to be ready (up to 2 minutes)
@@ -84,15 +95,16 @@ curl -s http://127.0.0.1:9200 | head -20 || {
   exit 1
 }
 
-# ------------------------------------------------------------
-# 6. Install the federation SQL plugin (your branch build)
-#    Uncomment + update path when you upload the plugin zip.
-# ------------------------------------------------------------
-# PLUGIN_URL="s3://your-bucket/opensearch-sql-2.15.0.0-SNAPSHOT.zip"
-# aws s3 cp "$PLUGIN_URL" /mnt/ebs/work/sql-plugin.zip
-# docker cp /mnt/ebs/work/sql-plugin.zip os:/tmp/
-# docker exec os /usr/share/opensearch/bin/opensearch-plugin install \
-#   --batch file:///tmp/sql-plugin.zip
-# docker restart os
-
-echo "bootstrap.sh done. SSH in as ec2-user and run ingest.sh"
+echo ""
+echo "================================================================"
+echo " bootstrap.sh stage 1 done."
+echo ""
+echo " NEXT: upload the feat/ppl-federation plugin zip and run stage 2."
+echo "   From your laptop (repo root):"
+echo "     ./docs/dev/demo/path-a/build-and-upload-plugin.sh <instance-ip>"
+echo ""
+echo "   Then on the instance:"
+echo "     sudo /mnt/ebs/work/path-a/install-plugin.sh"
+echo ""
+echo " After plugin install: ./ingest.sh"
+echo "================================================================"
