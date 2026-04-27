@@ -65,13 +65,21 @@ sysctl --system
 docker pull opensearchproject/opensearch:3.6.0
 
 docker rm -f os 2>/dev/null || true
+# Security plugin notes for OS 3.6.0:
+#   DISABLE_INSTALL_DEMO_CONFIG=true — skip demo cert/config generation,
+#     which otherwise requires OPENSEARCH_INITIAL_ADMIN_PASSWORD and quits
+#     the container if absent (3.6.0 behavior; different from earlier docs
+#     that referenced `plugins.security.disabled`).
+#   DISABLE_SECURITY_PLUGIN=true — fully unload the security plugin, so the
+#     REST API accepts unauthenticated requests. Demo environment only.
 docker run -d \
   --name os \
   --restart unless-stopped \
   -p 127.0.0.1:9200:9200 \
   -p 127.0.0.1:9600:9600 \
   -e "discovery.type=single-node" \
-  -e "plugins.security.disabled=true" \
+  -e "DISABLE_INSTALL_DEMO_CONFIG=true" \
+  -e "DISABLE_SECURITY_PLUGIN=true" \
   -e "OPENSEARCH_JAVA_OPTS=-Xms24g -Xmx24g" \
   -e "bootstrap.memory_lock=true" \
   --ulimit memlock=-1:-1 \
