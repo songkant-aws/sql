@@ -61,7 +61,10 @@ log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 # 1. Build the plugin zip
 # ------------------------------------------------------------
 log "Building plugin (this may take a few minutes)..."
-./gradlew :plugin:assemble
+# The Gradle project name is 'opensearch-sql-plugin' (see settings.gradle);
+# the on-disk directory is 'plugin/'. bundlePlugin is the canonical task
+# that produces the installable zip (integ-test also depends on it).
+./gradlew :opensearch-sql-plugin:bundlePlugin
 
 # ------------------------------------------------------------
 # 2. Locate the freshly-built zip
