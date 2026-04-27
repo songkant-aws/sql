@@ -1,0 +1,22 @@
+{
+  "settings": {
+    "index": {
+      "number_of_shards": 3,
+      "number_of_replicas": 0,
+      "refresh_interval": "-1"
+    }
+  },
+  "mappings": {
+    "properties": {
+      "parent_asin":       { "type": "keyword" },
+      "asin":              { "type": "keyword" },
+      "user_id":           { "type": "keyword" },
+      "rating":            { "type": "float" },
+      "helpful_vote":      { "type": "integer" },
+      "timestamp":         { "type": "long" },
+      "verified_purchase": { "type": "boolean" },
+      "title":             { "type": "keyword", "ignore_above": 1024 },
+      "text":              { "type": "keyword", "index": false, "doc_values": false }
+    }
+  }
+}
