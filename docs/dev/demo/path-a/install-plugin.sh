@@ -48,34 +48,57 @@ log "Using plugin: $PLUGIN_ZIP"
 # ------------------------------------------------------------
 # 2. Sanity-check version compatibility
 # ------------------------------------------------------------
-# Plugin zip is named opensearch-sql-<OS_VERSION>.0-SNAPSHOT.zip (or
-# .0.zip for release). Extract the OS version and compare to the running
-# container.
+# Plugin zip naming convention is opensearch-sql-<OS>.<PLUGIN_REV>[-SNAPSHOT].zip
+# where <OS> is the three-part OS version (e.g. 3.6.0) and <PLUGIN_REV> is
+# usually 0. Examples:
+#   opensearch-sql-3.6.0.0.zip           (release build, installs into OS 3.6.0)
+#   opensearch-sql-3.6.0.0-SNAPSHOT.zip  (SNAPSHOT build, installs into SNAPSHOT OS only)
+# We extract the <OS> prefix and compare it to the running OS version.
 ZIP_BASENAME="$(basename "$PLUGIN_ZIP")"
-# Strip prefix "opensearch-sql-" and suffix ".zip", then take the leading
-# OS version (everything before the last ".0").
+# Strip "opensearch-sql-" prefix and ".zip" suffix, then the trailing
+# ".<PLUGIN_REV>" or ".<PLUGIN_REV>-SNAPSHOT". What remains is <OS>.
 PLUGIN_VERSION="${ZIP_BASENAME#opensearch-sql-}"
 PLUGIN_VERSION="${PLUGIN_VERSION%.zip}"
+# Drop optional -SNAPSHOT suffix first.
+PLUGIN_VERSION_NO_SNAPSHOT="${PLUGIN_VERSION%-SNAPSHOT}"
+# Drop the trailing plugin revision (".0" — the fourth dotted field).
+PLUGIN_OS_VERSION="${PLUGIN_VERSION_NO_SNAPSHOT%.*}"
 
 OS_RUNNING_VERSION=$(curl -s "$OS_URL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["number"])')
+OS_RUNNING_SNAPSHOT=$(curl -s "$OS_URL" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["build_snapshot"])')
 
-log "Plugin zip version string: $PLUGIN_VERSION"
-log "OpenSearch running version: $OS_RUNNING_VERSION"
-
-# Plugin version looks like "3.6.0.0-SNAPSHOT"; OS version looks like
-# "3.6.0". The plugin's leading <maj>.<min>.<patch> must match OS.
-PLUGIN_OS_PART="${PLUGIN_VERSION%%.0-*}"   # "3.6.0.0-SNAPSHOT" -> "3.6"
-PLUGIN_OS_PART="${PLUGIN_OS_PART%.0}"      # "3.6.0" -> "3.6"
-# Actually the plugin-zip naming is <OS>.0[-SNAPSHOT] where <OS> is X.Y.Z.
-# Simplest: strip the trailing ".0" or ".0-SNAPSHOT" and compare.
-PLUGIN_OS_VERSION="${PLUGIN_VERSION%.0-SNAPSHOT}"
-PLUGIN_OS_VERSION="${PLUGIN_OS_VERSION%.0}"
+log "Plugin zip: $ZIP_BASENAME"
+log "  => OS version extracted: $PLUGIN_OS_VERSION"
+log "  => SNAPSHOT build: $([ "$PLUGIN_VERSION" != "$PLUGIN_VERSION_NO_SNAPSHOT" ] && echo yes || echo no)"
+log "Running OpenSearch: $OS_RUNNING_VERSION (build_snapshot=$OS_RUNNING_SNAPSHOT)"
 
 if [ "$PLUGIN_OS_VERSION" != "$OS_RUNNING_VERSION" ]; then
   echo "ERROR: plugin was built for OS $PLUGIN_OS_VERSION, but the running"
   echo "       container is OS $OS_RUNNING_VERSION. Plugin install will fail"
   echo "       or silently poison the benchmark."
-  echo "       Rebuild with: ./gradlew :plugin:assemble -Dopensearch.version=${OS_RUNNING_VERSION}-SNAPSHOT"
+  echo "       Rebuild with: ./gradlew :opensearch-sql-plugin:bundlePlugin \\"
+  echo "                       -Dopensearch.version=${OS_RUNNING_VERSION} \\"
+  echo "                       -Dbuild.snapshot=false"
+  exit 1
+fi
+
+# Also sanity-check SNAPSHOT alignment: a SNAPSHOT plugin won't install
+# into a release OS (plugin-descriptor.properties checks this), and a
+# release plugin won't install into a SNAPSHOT OS either.
+PLUGIN_IS_SNAPSHOT="false"
+[ "$PLUGIN_VERSION" != "$PLUGIN_VERSION_NO_SNAPSHOT" ] && PLUGIN_IS_SNAPSHOT="true"
+if [ "$PLUGIN_IS_SNAPSHOT" != "$OS_RUNNING_SNAPSHOT" ]; then
+  echo "ERROR: SNAPSHOT mismatch. Plugin SNAPSHOT=$PLUGIN_IS_SNAPSHOT,"
+  echo "       OpenSearch build_snapshot=$OS_RUNNING_SNAPSHOT."
+  echo "       OpenSearch refuses to install a SNAPSHOT plugin into a"
+  echo "       release OS (or vice versa). Rebuild with:"
+  if [ "$OS_RUNNING_SNAPSHOT" = "False" ] || [ "$OS_RUNNING_SNAPSHOT" = "false" ]; then
+    echo "         ./gradlew :opensearch-sql-plugin:bundlePlugin \\"
+    echo "             -Dopensearch.version=${OS_RUNNING_VERSION} \\"
+    echo "             -Dbuild.snapshot=false"
+  else
+    echo "         ./gradlew :opensearch-sql-plugin:bundlePlugin"
+  fi
   exit 1
 fi
 
