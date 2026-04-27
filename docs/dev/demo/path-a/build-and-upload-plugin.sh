@@ -13,12 +13,33 @@ set -euo pipefail
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <ec2-host>"
   echo "  where <ec2-host> is an IP or an SSH alias from ~/.ssh/config"
+  echo ""
+  echo "Env vars:"
+  echo "  SSH_KEY   path to .pem if <ec2-host> is a raw IP (default: empty,"
+  echo "            which lets ssh/scp resolve IdentityFile via ~/.ssh/config)"
+  echo "  SSH_USER  remote user (default: ec2-user)"
+  echo ""
+  echo "Examples:"
+  echo "  SSH_KEY=~/.ssh/path-a.pem $0 54.123.45.67"
+  echo "  $0 path-a-demo    # uses ~/.ssh/config alias"
   exit 1
 fi
 
 HOST="$1"
 SSH_USER="${SSH_USER:-ec2-user}"
 REMOTE_DIR="${REMOTE_DIR:-/mnt/ebs/work}"
+
+# Let the operator point at an explicit key (raw IP + pem file). If they
+# configured an SSH alias in ~/.ssh/config, this can be left empty — ssh/scp
+# will pick up IdentityFile from the alias automatically.
+SSH_KEY="${SSH_KEY:-}"
+if [ -n "$SSH_KEY" ]; then
+  SSH_OPT=(-i "$SSH_KEY" -o StrictHostKeyChecking=accept-new)
+  RSYNC_E=(-e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new")
+else
+  SSH_OPT=()
+  RSYNC_E=()
+fi
 
 # Figure out repo root (this script lives at docs/dev/demo/path-a/).
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -62,14 +83,15 @@ log "SHA:   $(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 # 3. Upload to the instance
 # ------------------------------------------------------------
 log "Uploading to $SSH_USER@$HOST:$REMOTE_DIR/ ..."
-scp "$ZIP_PATH" "$SSH_USER@$HOST:$REMOTE_DIR/$ZIP_NAME"
+scp "${SSH_OPT[@]}" "$ZIP_PATH" "$SSH_USER@$HOST:$REMOTE_DIR/$ZIP_NAME"
 
 # Also push this directory's scripts in case the operator hasn't rsync'd yet.
 log "Uploading path-a scripts..."
-rsync -avz --exclude 'ingest-timings.txt' --exclude 'plugin-version.txt' \
+rsync -avz "${RSYNC_E[@]}" \
+  --exclude 'ingest-timings.txt' --exclude 'plugin-version.txt' \
   "$SCRIPT_DIR/" "$SSH_USER@$HOST:$REMOTE_DIR/path-a/"
 
-ssh "$SSH_USER@$HOST" "chmod +x $REMOTE_DIR/path-a/*.sh"
+ssh "${SSH_OPT[@]}" "$SSH_USER@$HOST" "chmod +x $REMOTE_DIR/path-a/*.sh"
 
 cat <<EOF
 
