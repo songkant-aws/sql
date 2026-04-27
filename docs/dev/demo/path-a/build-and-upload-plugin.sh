@@ -32,13 +32,20 @@ REMOTE_DIR="${REMOTE_DIR:-/mnt/ebs/work}"
 # Let the operator point at an explicit key (raw IP + pem file). If they
 # configured an SSH alias in ~/.ssh/config, this can be left empty — ssh/scp
 # will pick up IdentityFile from the alias automatically.
+#
+# Using plain string expansion (not arrays) keeps this compatible with
+# macOS's ancient bash 3.2. SSH_OPT carries an -i flag pair; RSYNC_E carries
+# a single `-e "ssh -i …"` form. When SSH_KEY is empty, both are empty and
+# the commands below run unchanged.
 SSH_KEY="${SSH_KEY:-}"
 if [ -n "$SSH_KEY" ]; then
-  SSH_OPT=(-i "$SSH_KEY" -o StrictHostKeyChecking=accept-new)
-  RSYNC_E=(-e "ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new")
+  SSH_OPT_CMD="ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new"
+  SCP_CMD="scp -i $SSH_KEY -o StrictHostKeyChecking=accept-new"
+  RSYNC_OPTS=(-e "$SSH_OPT_CMD")
 else
-  SSH_OPT=()
-  RSYNC_E=()
+  SSH_OPT_CMD="ssh"
+  SCP_CMD="scp"
+  RSYNC_OPTS=()
 fi
 
 # Figure out repo root (this script lives at docs/dev/demo/path-a/).
@@ -70,12 +77,13 @@ log "Building plugin (this may take a few minutes)..."
 # 2. Locate the freshly-built zip
 # ------------------------------------------------------------
 DIST_DIR="plugin/build/distributions"
-mapfile -t candidates < <(ls -t "$DIST_DIR"/opensearch-sql-*.zip 2>/dev/null)
-if [ "${#candidates[@]}" -eq 0 ]; then
+# Pick the newest zip matching the pattern. Avoid `mapfile` (bash 4+) for
+# macOS compatibility — macOS ships bash 3.2 by default.
+ZIP_PATH=$(ls -t "$DIST_DIR"/opensearch-sql-*.zip 2>/dev/null | head -n1)
+if [ -z "$ZIP_PATH" ]; then
   echo "ERROR: no zip found under $DIST_DIR after build"
   exit 1
 fi
-ZIP_PATH="${candidates[0]}"
 ZIP_NAME="$(basename "$ZIP_PATH")"
 
 log "Built: $ZIP_PATH"
@@ -86,15 +94,17 @@ log "SHA:   $(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 # 3. Upload to the instance
 # ------------------------------------------------------------
 log "Uploading to $SSH_USER@$HOST:$REMOTE_DIR/ ..."
-scp "${SSH_OPT[@]}" "$ZIP_PATH" "$SSH_USER@$HOST:$REMOTE_DIR/$ZIP_NAME"
+$SCP_CMD "$ZIP_PATH" "$SSH_USER@$HOST:$REMOTE_DIR/$ZIP_NAME"
 
 # Also push this directory's scripts in case the operator hasn't rsync'd yet.
 log "Uploading path-a scripts..."
-rsync -avz "${RSYNC_E[@]}" \
+# ${RSYNC_OPTS[@]+"${RSYNC_OPTS[@]}"} is the bash-3.2-safe way to expand a
+# possibly-empty array under `set -u`.
+rsync -avz ${RSYNC_OPTS[@]+"${RSYNC_OPTS[@]}"} \
   --exclude 'ingest-timings.txt' --exclude 'plugin-version.txt' \
   "$SCRIPT_DIR/" "$SSH_USER@$HOST:$REMOTE_DIR/path-a/"
 
-ssh "${SSH_OPT[@]}" "$SSH_USER@$HOST" "chmod +x $REMOTE_DIR/path-a/*.sh"
+$SSH_OPT_CMD "$SSH_USER@$HOST" "chmod +x $REMOTE_DIR/path-a/*.sh"
 
 cat <<EOF
 
