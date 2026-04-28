@@ -37,9 +37,10 @@ customer is paying an **ETL tax that scales with their data**."
 
 "Here's what that tax looks like in a real workload.
 
-**Amazon Reviews 2023** — a public UCSD dataset. 3.7 million products,
-67 million reviews. End-to-end measurements, warm-run medians.
-Reproduction scripts in the repo.
+**We measured this on Amazon Reviews 2023** — a public UCSD dataset.
+We loaded 3.7 million products and 67 million reviews, then compared
+the three execution paths end-to-end, warm-run medians. Reproduction
+scripts are in the repo.
 
 *Point at table rows.*
 
