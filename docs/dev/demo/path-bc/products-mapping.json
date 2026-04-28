@@ -1,0 +1,23 @@
+{
+  "settings": {
+    "index": {
+      "number_of_shards": 3,
+      "number_of_replicas": 0,
+      "refresh_interval": "-1"
+    }
+  },
+  "mappings": {
+    "properties": {
+      "parent_asin":    { "type": "keyword" },
+      "title":          { "type": "text" },
+      "description":    { "type": "text" },
+      "features":       { "type": "text" },
+      "categories":     { "type": "keyword" },
+      "main_category":  { "type": "keyword" },
+      "store":          { "type": "keyword" },
+      "average_rating": { "type": "float" },
+      "rating_number":  { "type": "integer" },
+      "price":          { "type": "float" }
+    }
+  }
+}
