@@ -547,16 +547,16 @@
           <tr>
             <td>End-to-end latency (warm)</td>
             <td class="num">30 s</td>
-            <td class="num">~600 ms</td>
-            <td class="num"><strong>~170 ms</strong></td>
-            <td class="num"><strong>~176×</strong></td>
+            <td class="num">~2.4 s</td>
+            <td class="num"><strong>~195 ms</strong></td>
+            <td class="num"><strong>~154×</strong></td>
           </tr>
           <tr>
             <td>ClickHouse engine-only</td>
             <td class="num">—</td>
-            <td class="num">465 ms</td>
-            <td class="num"><strong>6–7 ms</strong></td>
-            <td class="num">~71× (B→C)</td>
+            <td class="num">384 ms</td>
+            <td class="num"><strong>7–8 ms</strong></td>
+            <td class="num">~48× (B→C)</td>
           </tr>
           <tr>
             <td>Rows scanned at CH</td>
@@ -566,24 +566,24 @@
             <td class="num">187× less</td>
           </tr>
           <tr>
-            <td>Bytes read at CH</td>
+            <td>Rows returned to OS</td>
             <td class="num">—</td>
-            <td class="num">1.94 GB</td>
-            <td class="num"><strong>8.48 MB</strong></td>
-            <td class="num">233× less</td>
+            <td class="num">50 K (capped)</td>
+            <td class="num"><strong>14 (aggregated)</strong></td>
+            <td class="num">~3500× less</td>
           </tr>
           <tr>
-            <td>Correctness (simple join rows)</td>
+            <td>Correctness</td>
             <td class="num"><strong>2 (96 % loss)</strong></td>
-            <td class="num">1197</td>
-            <td class="num">1197 ✓</td>
+            <td class="num">14 ✓</td>
+            <td class="num">14 ✓</td>
             <td class="num">—</td>
           </tr>
         </tbody>
       </table>
       <p style="margin-top: 0.4em; font-size: 0.75em; color: var(--muted);">
-        Benchmark query: search 50 cookware products (BM25), join reviews filtered to 2022+,
-        aggregate avg rating and count per product. Full PPL on slide 7.
+        Benchmark query: search 50 cookware products (BM25), join with reviews'
+        per-product aggregate from ClickHouse. Full PPL on slide 9.
       </p>
       <aside class="notes">
         60 seconds. Lead with the framing: Path A asks OS to do both
@@ -608,7 +608,7 @@
           OS does 378 pagination round-trips;
           CH does one shot.
         </div>
-        <div class="from">30 s&nbsp;→&nbsp;600 ms</div>
+        <div class="from">30 s&nbsp;→&nbsp;2.4 s</div>
 
         <div><span class="pill b">B</span></div>
         <div>
@@ -617,7 +617,7 @@
           as <code>WHERE parent_asin IN (…)</code>. CH's MergeTree primary-key
           index skips &gt;99 % of partitions.
         </div>
-        <div class="from">600 ms&nbsp;→&nbsp;170 ms</div>
+        <div class="from">2.4 s&nbsp;→&nbsp;195 ms</div>
 
         <div><span class="pill c">C</span></div>
         <div>
@@ -723,9 +723,8 @@
     on p.parent_asin = r.parent_asin
   [ <mark class="hl-fed">source=ch.fed.reviews</mark>
     | where timestamp &gt; 1640995200000
-    | fields parent_asin, rating ]
-| stats avg(rating) as avg_r,
-        count() as n by parent_asin</code></pre>
+    | stats avg(rating) as avg_r,
+            count() as n by parent_asin ]</code></pre>
           <p style="font-size: 0.7em; color: var(--muted); margin-top: 0.4em;">
             <mark class="hl-search" style="padding: 0 0.3em;">match(title, …)</mark> — BM25 search, OS's native strength.<br>
             <mark class="hl-fed" style="padding: 0 0.3em;">source=ch.fed.reviews</mark> — the whole federation delta. That prefix is all the customer writes.
@@ -808,69 +807,60 @@
     <section class="appendix-slide">
       <div class="kicker">Appendix · for the technically curious</div>
       <h2 style="font-size: 1.05em; margin-bottom: 0.15em;">
-        Path C physical plan — IN-list pushdown at the JDBC layer
+        Path C physical plan — IN-list pushdown with CH-side aggregate
       </h2>
       <p style="font-size: 0.62em; color: var(--muted); margin-bottom: 0.35em;">
-        <code>POST /_plugins/_ppl/_explain?format=yaml</code> · physical tree only
-        (logical omitted for space).
+        Output of <code>POST /_plugins/_ppl/_explain?format=yaml</code> on the benchmark query.
       </p>
-<pre class="explain-yaml"><code data-noescape>calcite:
-  physical: |
-    EnumerableLimit(fetch=[10000])
-      EnumerableCalc(... avg_r, n, parent_asin ...)
-        EnumerableAggregate(group=[{0}], agg#0=[$SUM0($2)], agg#1=[COUNT()])
-          <mark class="hl-join">EnumerableHashJoin(condition=[=($0, $1)], joinType=[inner])</mark>
-            CalciteEnumerableIndexScan(table=[[OpenSearch, products]],
-              PushDownContext=[[FILTER-&gt;match(title, 'stainless steel cookware'),
-                                SORT-&gt;_score desc, LIMIT-&gt;50, PROJECT-&gt;[parent_asin]]],
-              requestedTotalSize=50)
-            <mark class="hl-jdbc">JdbcToEnumerableConverter</mark>
-              <mark class="hl-jdbc">JdbcSort(fetch=[50000])</mark>
-                <mark class="hl-jdbc">JdbcProject(parent_asin=[$0], rating=[$3])</mark>
-                  <mark class="hl-jdbc">JdbcFilter(condition=[AND(<mark class="hl-arrayin">ARRAY_IN($0, ?0)</mark>, &gt;($5, 1640995200000))])</mark>
-                    <mark class="hl-jdbc">JdbcTableScan(table=[[ClickHouse, ch, fed, reviews]])</mark></code></pre>
+<pre class="explain-yaml"><code data-noescape>EnumerableLimit(fetch=[10000])
+  EnumerableCalc(expr#0..12=[{inputs}], ... avg_r=[$t0], n=[$t1], parent_asin=[$t2])
+    <mark class="hl-join">EnumerableHashJoin(condition=[=($2, $4)], joinType=[inner])</mark>
+      <mark class="hl-jdbc">JdbcToEnumerableConverter</mark>
+        <mark class="hl-jdbc">JdbcSort(fetch=[50000])</mark>
+          <mark class="hl-jdbc">JdbcProject(avg_r=[$1], n=[$2], parent_asin=[$0])</mark>
+            <mark class="hl-jdbc">JdbcAggregate(group=[{0}], avg_r=[AVG($3)], n=[COUNT()])</mark>
+              <mark class="hl-jdbc">JdbcFilter(condition=[AND(<mark class="hl-arrayin">ARRAY_IN($0, ?0)</mark>, &gt;($5, 1640995200000))])</mark>
+                <mark class="hl-jdbc">JdbcTableScan(table=[[ClickHouse, ch, fed, reviews]])</mark>
+      CalciteEnumerableIndexScan(table=[[OpenSearch, products]],
+        PushDownContext=[[ FILTER-&gt;match(title, 'stainless steel cookware'),
+                           SORT-&gt;_score desc, LIMIT-&gt;50, PROJECT-&gt;[features, parent_asin, ...] ]],
+        requestedTotalSize=50)</code></pre>
       <div class="explain-callouts">
         <div class="callout">
           <span class="callout-badge hl-join-badge">EnumerableHashJoin</span>
           <span class="callout-text">
-            <code>SideInputInListRule</code> operand matched — the only join shape the rule fires on.
+            <code>SideInputInListRule</code> operand — rule now fires on all
+            compatible join types (hash / merge / nested-loop).
           </span>
         </div>
         <div class="callout">
-          <span class="callout-badge hl-jdbc-badge">JDBC subtree</span>
+          <span class="callout-badge hl-jdbc-badge">JDBC subtree (Agg + Filter + Scan)</span>
           <span class="callout-text">
-            Entire right-side plan (<em>Sort + Project + Filter + Scan</em>) ships to CH as one SQL. No row round-trips.
+            Full right-side plan ships to CH as one SQL, <strong>aggregate included</strong>.
+            CH returns pre-aggregated rows, not raw reviews.
           </span>
         </div>
         <div class="callout">
           <span class="callout-badge hl-arrayin-badge">ARRAY_IN($0, ?0)</span>
           <span class="callout-text">
-            Runtime IN-list. <code>?0</code> is bound to the 50 distinct
-            <code>parent_asin</code>s drained from the left. CH's MergeTree PK
-            skips &gt;99 % of partitions → 67 M rows scanned → 360 K.
+            IN-list sits <strong>below the aggregate</strong>, so CH filters input rows
+            before GROUP BY. <code>?0</code> is runtime-bound to the 50 keys drained
+            from OS. MergeTree PK index skips &gt;99 % of partitions.
           </span>
         </div>
       </div>
-      <p style="font-size: 0.6em; color: var(--muted); margin-top: 0.5em; font-style: italic;">
-        <strong>Not pushed to CH:</strong> the <code>Aggregate</code> sits above the Join,
-        since <code>stats</code> is outside the subsearch in this PPL shape. With the IN-list
-        already narrowing the scan to ~1 K rows, pushing the agg down would save bytes on
-        the wire, not latency. Rule scope: outer-agg shape; inner-agg (<code>stats</code>
-        inside the subsearch) is a separate optimization.
-      </p>
       <aside class="notes">
         Appendix — not part of the main 5-min flow. Flip here when an
         engineer asks "how does the rule actually rewrite the plan?".
         Walk the highlights bottom-up:
-          1. JdbcTableScan — the only thing the rule touches
-          2. JdbcFilter with ARRAY_IN — the rule's output
-          3. EnumerableHashJoin — the operand precondition
-
-        Common Q: "why isn't the Aggregate pushed to CH?" — because
-        the PPL `stats` clause is outside the subsearch (outer-agg
-        shape). With IN-list already narrowing to ~1K rows, pushing
-        Agg would cut wire bytes but not wall-clock. A separate rule
-        would be needed for inner-agg shape.
+          1. JdbcTableScan — the rule's anchor
+          2. JdbcFilter with ARRAY_IN — the rule's output, inserted
+             below the aggregate so IN-list prunes input rows before
+             GROUP BY
+          3. JdbcAggregate — stays inside the JDBC subtree; CH does
+             the aggregation and returns 14 rows, not raw reviews
+          4. EnumerableHashJoin — rule operand now covers all
+             compatible join types
       </aside>
     </section>
 
