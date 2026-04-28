@@ -79,24 +79,34 @@ docker exec os /usr/share/opensearch/bin/opensearch-plugin install --batch file:
 # ------------------------------------------------------------
 # 4. Configure datasource master key (Path B/C specific)
 # ------------------------------------------------------------
-# The datasource APIs require a 256-bit AES master key in opensearch.yml
-# (or opensearch.keystore). We add it to opensearch.yml for simplicity.
-# Random 32-byte base64 generated once, then persisted so re-runs keep
-# the same key (otherwise existing encrypted datasources become unreadable).
-
+# The datasource APIs encrypt connector credentials at rest using AES-256,
+# which means the master key must be exactly 32 BYTES (raw, not base64).
+#
+# The plugin reads the string verbatim from opensearch.yml and uses its
+# UTF-8 byte length as the AES key length — so 'base64(32 random bytes)'
+# produces a 44-character string and the plugin fails with:
+#   java.security.InvalidKeyException: Invalid AES key length: 44 bytes
+#
+# Generate 32 printable chars from random bytes (base64 of 24 bytes yields
+# 32 chars without padding, avoiding '+'/'/'/'=' that can break YAML).
 MASTER_KEY_FILE="$WORK/os-datasource-master-key.txt"
 if [ ! -f "$MASTER_KEY_FILE" ]; then
-  log "Generating new datasource master key (AES-256, base64)..."
-  head -c 32 /dev/urandom | base64 -w0 > "$MASTER_KEY_FILE"
+  log "Generating new datasource master key (32 bytes / 32 ASCII chars)..."
+  head -c 24 /dev/urandom | base64 | tr -d '=+/' | cut -c1-32 > "$MASTER_KEY_FILE"
   chmod 600 "$MASTER_KEY_FILE"
 fi
 MASTER_KEY=$(cat "$MASTER_KEY_FILE")
+if [ "$(echo -n "$MASTER_KEY" | wc -c)" -ne 32 ]; then
+  echo "ERROR: master key in $MASTER_KEY_FILE is not exactly 32 chars. Regenerate:"
+  echo "  rm $MASTER_KEY_FILE && $0"
+  exit 1
+fi
 
 log "Ensuring plugins.query.datasources.encryption.masterkey is set..."
+# Always strip and re-add so a stale (e.g. 44-char base64) key gets replaced.
 docker exec os bash -c "
-  if ! grep -q '^plugins.query.datasources.encryption.masterkey' /usr/share/opensearch/config/opensearch.yml; then
-    echo 'plugins.query.datasources.encryption.masterkey: $MASTER_KEY' >> /usr/share/opensearch/config/opensearch.yml
-  fi
+  sed -i '/^plugins.query.datasources.encryption.masterkey/d' /usr/share/opensearch/config/opensearch.yml
+  echo 'plugins.query.datasources.encryption.masterkey: $MASTER_KEY' >> /usr/share/opensearch/config/opensearch.yml
 "
 
 # ------------------------------------------------------------
