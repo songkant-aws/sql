@@ -127,6 +127,22 @@
       font-size: 0.45em;
     }
 
+    /* Summary slide: center content vertically, biased slightly toward the top
+       (start: 40% rather than 50%) so the footnote doesn't feel cramped. */
+    .reveal .summary-slide {
+      display: flex !important;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: stretch;
+      height: 100%;
+    }
+    .reveal .summary-slide .summary-inner {
+      margin-top: auto;
+      margin-bottom: auto;
+      /* Push a touch above true center for visual balance with the footer. */
+      transform: translateY(-4%);
+    }
+
     .tight-list li { margin: 0.1em 0; }
     .reveal ul { font-size: 0.8em; }
     .reveal pre { margin: 0.3em 0; }
@@ -450,56 +466,56 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 8: BUSINESS & ASK ============ -->
-    <section>
-      <div class="kicker">Business implications &amp; the ask</div>
-      <h2>What this means, and what I need</h2>
-      <table style="font-size: 0.75em;">
-        <tr>
-          <td style="font-weight: 600; width: 32%;">Do customers leave OS?</td>
-          <td>
-            <strong>No.</strong> OS stays the query entry point, auth surface,
-            dashboards, observability integration. Fact tables just live
-            where they belong.
-          </td>
-        </tr>
-        <tr>
-          <td style="font-weight: 600;">Lock-in to ClickHouse?</td>
-          <td>
-            No. <code>PplFederationDialect</code> is an extension point —
-            Iceberg, Snowflake, other JDBC targets declare capabilities
-            and plug in.
-          </td>
-        </tr>
-        <tr>
-          <td style="font-weight: 600;">Readiness?</td>
-          <td>
-            Code complete on <code>feat/ppl-federation</code>. Benchmarked
-            end-to-end on Amazon Reviews 2023 (67 M rows). Reproduction
-            scripts in repo.
-          </td>
-        </tr>
-      </table>
-      <h3 style="margin-top: 1.2em;">The ask</h3>
-      <ul class="tight-list" style="font-size: 0.85em;">
-        <li>Greenlight to propose at the <strong>next design review</strong>.</li>
-        <li>
-          One <strong>customer design partner</strong> — PPL user with &gt;50 M
-          fact rows they'd rather not keep in OS. Retail and observability both fit.
-        </li>
-        <li>
-          Agreement that <strong>ClickHouse is the reference first datasource</strong> —
-          additional JDBC targets plug into the same rule framework incrementally.
-        </li>
-      </ul>
+    <!-- ============ SLIDE 8: SUMMARY & NEXT STEPS ============ -->
+    <section class="summary-slide">
+      <div class="summary-inner">
+        <div class="kicker">Summary</div>
+        <h2 style="margin-bottom: 0.6em;">What this means</h2>
+        <table style="font-size: 0.75em; margin-bottom: 1em;">
+          <tr>
+            <td style="font-weight: 600; width: 32%;">Do customers leave OS?</td>
+            <td>
+              <strong>No.</strong> OS stays the query entry point, auth surface,
+              dashboards, observability integration. Fact tables just live
+              where they belong.
+            </td>
+          </tr>
+          <tr>
+            <td style="font-weight: 600;">Lock-in to ClickHouse?</td>
+            <td>
+              No. <code>PplFederationDialect</code> is an extension point —
+              Iceberg, Snowflake, other JDBC targets declare capabilities
+              and plug in.
+            </td>
+          </tr>
+          <tr>
+            <td style="font-weight: 600;">Readiness?</td>
+            <td>
+              Code complete on <code>feat/ppl-federation</code>. Benchmarked
+              end-to-end on Amazon Reviews 2023 (67 M rows). Reproduction
+              scripts in repo.
+            </td>
+          </tr>
+        </table>
+        <h3 style="color: var(--text); font-size: 1em;">Possible next steps</h3>
+        <ul class="tight-list" style="font-size: 0.85em;">
+          <li>
+            Find a <strong>customer design partner</strong> — PPL user with &gt;50 M
+            fact rows they'd rather not keep in OS. Retail and observability both fit.
+          </li>
+          <li>
+            Start with <strong>ClickHouse as the reference first datasource</strong> —
+            additional JDBC targets plug into the same rule framework incrementally.
+          </li>
+        </ul>
+      </div>
       <footer class="footnote">
         Repro: <code>docs/dev/demo/path-a/</code> &nbsp;·&nbsp;
         <code>docs/dev/demo/path-bc/</code>
       </footer>
       <aside class="notes">
-        30 seconds. Close fast: three concrete asks, no meandering.
-        The design review ask is the real one — the other two follow
-        naturally once there's a greenlight.
+        30 seconds. Soft close. Frame next steps as a conversation
+        opener, not an ask list. Let the room suggest the design partner.
       </aside>
     </section>
 
