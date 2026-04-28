@@ -28,21 +28,24 @@
       text-transform: none;
       letter-spacing: -0.02em;
     }
-    .reveal h1 { font-size: 2.1em; }
-    .reveal h2 { font-size: 1.5em; margin-bottom: 0.5em; }
-    .reveal h3 { font-size: 1.15em; color: var(--muted); }
-    .reveal section { text-align: left; }
+    .reveal h1 { font-size: 1.9em; }
+    .reveal h2 { font-size: 1.35em; margin-bottom: 0.4em; }
+    .reveal h3 { font-size: 1.05em; color: var(--muted); }
+    .reveal section { text-align: left; font-size: 0.9em; }
     .reveal .title-slide { text-align: center; }
+    .reveal p { margin: 0.35em 0; }
+    .reveal li { margin: 0.1em 0; }
 
     .reveal table {
-      font-size: 0.75em;
+      font-size: 0.62em;
       border-collapse: collapse;
-      margin: 0.5em auto;
+      margin: 0.4em auto;
       width: 100%;
     }
     .reveal table th, .reveal table td {
       border: 1px solid #d1d5db;
-      padding: 0.45em 0.6em;
+      padding: 0.3em 0.5em;
+      line-height: 1.3;
     }
     .reveal table th {
       background: var(--panel);
@@ -106,11 +109,11 @@
 
     .ascii-art {
       font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
-      font-size: 0.52em;
-      line-height: 1.25;
+      font-size: 0.45em;
+      line-height: 1.2;
       white-space: pre;
       background: var(--panel);
-      padding: 1em;
+      padding: 0.8em;
       border-radius: 8px;
     }
 
@@ -124,8 +127,10 @@
       font-size: 0.45em;
     }
 
-    .tight-list li { margin: 0.15em 0; }
-    .reveal ul { font-size: 0.85em; }
+    .tight-list li { margin: 0.1em 0; }
+    .reveal ul { font-size: 0.8em; }
+    .reveal pre { margin: 0.3em 0; }
+    .reveal pre code { padding: 0.5em 0.7em; border-radius: 6px; }
 
     .two-col {
       display: grid;
@@ -394,38 +399,25 @@
     <section>
       <div class="kicker">How it works</div>
       <h2>One planner, two storages, one PPL</h2>
-      <div class="two-col" style="grid-template-columns: 1fr 1.2fr;">
-        <div class="ascii-art">  Customer
-    (PPL · Dashboards · BM25)
-        │
-        ▼
-  ┌── OpenSearch ──┐
-  │                 │
-  │  PPL Parser    │
-  │   → Calcite    │
-  │   → Executor   │
-  │                 │
-  │  ┌──────────┐  │
-  │  │products  │  │
-  │  │ (OS)     │  │
-  │  └──────────┘  │
-  │  ┌──────────┐  │
-  │  │JdbcRel   │  │
-  │  │ (CH)     │──┼──→ JDBC
-  │  │+IN-list  │  │   VPC-private
-  │  └──────────┘  │
-  └─────────────────┘
-                    │
-                    ▼
-        ┌── ClickHouse ──┐
-        │                 │
-        │  MergeTree      │
-        │  pk: (parent_   │
-        │    asin, ts)    │
-        │                 │
-        │  scans 360 K    │
-        │  rows (not 67M) │
-        └─────────────────┘</div>
+      <div class="two-col" style="grid-template-columns: 1fr 1.3fr;">
+        <div class="ascii-art">Customer (PPL · Dashboards · BM25)
+       │
+       ▼
+┌─ OpenSearch ──────────┐
+│  PPL → Calcite → Exec │
+│    │                  │
+│    ├─ products (OS)   │
+│    │                  │
+│    └─ JdbcRel (CH)    │
+│       + IN-list filter│
+└────────────┬──────────┘
+             │ JDBC (VPC)
+             ▼
+┌─ ClickHouse ──────────┐
+│  MergeTree            │
+│  pk (parent_asin, ts) │
+│  scans 360 K (not 67M)│
+└───────────────────────┘</div>
         <div>
           <p style="font-size: 0.8em; margin-bottom: 0.4em;">
             <strong>The benchmark query (PPL)</strong>
@@ -525,9 +517,15 @@
     progress: true,
     transition: 'slide',
     center: false,
+    // 1280x800 widescreen canvas. All content sized so it fits inside this
+    // bounding box at 1:1 zoom; the browser will scale-to-fit when the
+    // window is smaller. If you see content cut off in print-pdf, bump
+    // height here in 20-40 px increments (NOT font sizes).
     width: 1280,
-    height: 760,
-    margin: 0.06,
+    height: 800,
+    margin: 0.04,
+    minScale: 0.2,
+    maxScale: 2.0,
     plugins: [ RevealHighlight, RevealNotes ]
   });
 </script>
