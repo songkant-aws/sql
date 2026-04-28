@@ -1,0 +1,33 @@
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │                      Customer                                │
+    │              (PPL · Dashboards · BM25)                       │
+    └────────────────────────────┬────────────────────────────────┘
+                                 │  source=products | ... |
+                                 │  inner join left=p right=r
+                                 │    [ source=ch.reviews | ... ]
+                                 ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                 OpenSearch  (entry point)                    │
+    │                                                              │
+    │    PPL Parser  →  Calcite Planner  →  Executor               │
+    │                         │                                    │
+    │      ┌──────────────────┼────────────────────┐               │
+    │      ▼                                       ▼               │
+    │  OS Storage                         JdbcRel (ClickHouse)     │
+    │  (products, small)                  (reviews, large fact)    │
+    │                                       │                       │
+    │                                       │ JdbcSideInputFilter   │
+    │                                       │  parent_asin IN (?)   │
+    └───────────────────────────────────────┼───────────────────────┘
+                                            │ JDBC, VPC-private
+                                            ▼
+                       ┌─────────────────────────────┐
+                       │      ClickHouse              │
+                       │   (columnar fact table)      │
+                       │                              │
+                       │   primary key on             │
+                       │   (parent_asin, timestamp)   │
+                       │                              │
+                       │   scans ~ 1000 rows, not 67M │
+                       └─────────────────────────────┘
