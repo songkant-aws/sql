@@ -1,0 +1,22 @@
+# Vendored reveal.js — ~4MB of third-party assets. Not demo content.
+# The README inside the directory documents how to re-fetch; we keep
+# the directory itself out of the repo.
+vendor/reveal.js/dist/
+vendor/reveal.js/plugin/
+vendor/reveal.js/css/
+vendor/reveal.js/js/
+vendor/reveal.js/node_modules/
+vendor/reveal.js/test/
+vendor/reveal.js/examples/
+vendor/reveal.js/gulpfile.js
+vendor/reveal.js/package*.json
+vendor/reveal.js/*.yaml
+vendor/reveal.js/*.yml
+vendor/reveal.js/LICENSE
+vendor/reveal.js/README.md
+
+# Generated outputs
+slides.pdf
+ppl-federation-demo.pdf
+ppl-federation-demo.html
+ppl-federation-demo-html.pdf

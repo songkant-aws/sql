@@ -21,6 +21,24 @@
 | `Makefile` | Build PDF exports (both slides and brief). |
 | `README.md` | This file. |
 
+## One-time setup
+
+`slides.html` loads reveal.js from `vendor/reveal.js/`, which is
+**not checked into the repo** (too large, and reveal.js is a
+toolchain dep). Fetch it once:
+
+```bash
+mkdir -p vendor/reveal.js
+cd vendor/reveal.js
+curl -L -o reveal.zip https://github.com/hakimel/reveal.js/archive/refs/tags/5.1.0.zip
+unzip -q reveal.zip
+mv reveal.js-5.1.0/* .
+rm -rf reveal.js-5.1.0 reveal.zip
+cd ../..
+```
+
+Sanity: `ls vendor/reveal.js/dist/reveal.js` should exist.
+
 ## Build the slide PDF
 
 ```bash

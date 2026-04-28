@@ -4,9 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PPL Federation — Leadership Pitch</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css" id="theme">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+  <!--
+    reveal.js assets: vendored into ./vendor/reveal.js rather than loaded
+    from CDN. The CDN path times out in Chrome headless cold-cache runs
+    during make slides-pdf, producing empty PDFs. Vendored assets render
+    instantly offline.
+
+    To refresh the vendored copy, see vendor/reveal.js/README.local.md.
+  -->
+  <link rel="stylesheet" href="vendor/reveal.js/dist/reveal.css">
+  <link rel="stylesheet" href="vendor/reveal.js/dist/theme/white.css" id="theme">
+  <link rel="stylesheet" href="vendor/reveal.js/plugin/highlight/monokai.css">
   <style>
     :root {
       --os-blue: #005EB8;
@@ -896,9 +904,9 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+<script src="vendor/reveal.js/dist/reveal.js"></script>
+<script src="vendor/reveal.js/plugin/highlight/highlight.js"></script>
+<script src="vendor/reveal.js/plugin/notes/notes.js"></script>
 <script>
   Reveal.initialize({
     hash: true,
