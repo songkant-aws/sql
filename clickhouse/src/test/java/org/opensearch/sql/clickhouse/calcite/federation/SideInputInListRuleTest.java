@@ -7,6 +7,7 @@ package org.opensearch.sql.clickhouse.calcite.federation;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -76,20 +77,84 @@ class SideInputInListRuleTest {
   // -------------------- isJoinTypeCompatibleWithInListPushdown --------------------
 
   @Test
-  void joinTypeGuardAcceptsInnerAndLeft() {
-    // INNER and LEFT: right-side rows with no left match never appear in the output, so filtering
-    // right to `key IN (<left keys>)` cannot drop a row that would otherwise contribute.
-    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.INNER));
-    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.LEFT));
+  void joinTypeGuardInnerAndSemiAreAlwaysSafe() {
+    // INNER and SEMI are orientation-independent: neither preserves rows on either side that
+    // don't have a match, so filtering the JDBC side by `key IN (<bounded keys>)` is a no-op on
+    // the result for both (drain left, filter right) and (drain right, filter left).
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.INNER, SideInputSide.RIGHT_IS_JDBC));
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.INNER, SideInputSide.LEFT_IS_JDBC));
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.SEMI, SideInputSide.RIGHT_IS_JDBC));
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.SEMI, SideInputSide.LEFT_IS_JDBC));
   }
 
   @Test
-  void joinTypeGuardAcceptsSemiAndAnti() {
-    // SEMI/ANTI: right rows act as existence probes only. Filtering right to `key IN (<left keys>)`
-    // leaves the per-left-key match/no-match answer unchanged because dropped right rows (key not
-    // in left) could never have matched any left row.
-    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.SEMI));
-    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.ANTI));
+  void joinTypeGuardLeftAndAntiSafeOnlyWhenFilteringRight() {
+    // LEFT preserves unmatched left rows; ANTI returns left rows with no right match. Filtering
+    // the *left* would drop exactly the rows that should survive — so these types are only safe
+    // when the filter lands on the right (i.e. JDBC is on the right).
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.LEFT, SideInputSide.RIGHT_IS_JDBC));
+    assertFalse(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.LEFT, SideInputSide.LEFT_IS_JDBC));
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.ANTI, SideInputSide.RIGHT_IS_JDBC));
+    assertFalse(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.ANTI, SideInputSide.LEFT_IS_JDBC));
+  }
+
+  @Test
+  void joinTypeGuardRightSafeOnlyWhenFilteringLeft() {
+    // RIGHT preserves unmatched right rows. Filtering the *right* would drop them — so RIGHT is
+    // only safe when the filter lands on the left (i.e. JDBC is on the left).
+    assertFalse(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.RIGHT, SideInputSide.RIGHT_IS_JDBC));
+    assertTrue(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.RIGHT, SideInputSide.LEFT_IS_JDBC));
+  }
+
+  @Test
+  void joinTypeGuardFullNeverSafe() {
+    // FULL preserves unmatched rows on both sides; filtering either side drops rows that should
+    // survive. Rejected regardless of orientation.
+    assertFalse(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.FULL, SideInputSide.RIGHT_IS_JDBC));
+    assertFalse(
+        SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(
+            JoinRelType.FULL, SideInputSide.LEFT_IS_JDBC));
+  }
+
+  // -------------------- detectJdbcSide --------------------
+
+  @Test
+  void detectJdbcSideReturnsNullWhenNeitherChildIsJdbc() {
+    // When both children are plain (non-JDBC) rels, detectJdbcSide must return null so the rule
+    // no-ops cleanly rather than inventing a side. End-to-end coverage for the JDBC-present case
+    // lives in ClickHouseFederationIT (a JDBC mock that passes Calcite's type-inference invariants
+    // would dominate this file without adding signal).
+    RelNode join =
+        builder
+            .scan("os")
+            .scan("ch")
+            .join(
+                JoinRelType.INNER,
+                builder.equals(builder.field(2, 0, 0), builder.field(2, 1, 0)))
+            .build();
+    assertNull(SideInputInListRule.detectJdbcSide((Join) join));
   }
 
   @Test
@@ -103,14 +168,6 @@ class SideInputInListRuleTest {
     RelOptRule rule = SideInputInListRule.INSTANCE;
     RelOptRuleOperand operand = rule.getOperand();
     assertEquals(Join.class, operand.getMatchedClass());
-  }
-
-  @Test
-  void joinTypeGuardRejectsRightAndFull() {
-    // RIGHT and FULL surface unmatched right rows. Filtering right to `key IN (<left keys>)` drops
-    // exactly those rows, so the rewrite would silently return incorrect results.
-    assertFalse(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.RIGHT));
-    assertFalse(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.FULL));
   }
 
   // -------------------- walkForStaticFetch --------------------
@@ -196,8 +253,8 @@ class SideInputInListRuleTest {
   // -------------------- determineBoundedSize --------------------
 
   @Test
-  void determineBoundedSizeUsesMetadataWhenLeftHasLimit() {
-    // Build `scan(os) | limit 50` JOIN `scan(ch)` so the left side has a statically-provable
+  void determineBoundedSizeUsesMetadataWhenBoundedInputHasLimit() {
+    // Build `scan(os) | limit 50` JOIN `scan(ch)` so the os subtree has a statically-provable
     // getMaxRowCount() == 50 via Calcite's RelMdMaxRowCount. With no bounded_left hint present,
     // determineBoundedSize must fall through to the metadata path and return 50.
     RelNode join =
@@ -209,8 +266,30 @@ class SideInputInListRuleTest {
                 JoinRelType.INNER,
                 builder.equals(builder.field(2, 0, 0), builder.field(2, 1, 0)))
             .build();
-    long bound = SideInputInListRule.determineBoundedSize((Join) join);
+    // Pass the bounded (os) input explicitly — the rule uses SideInputSide to pick which input
+    // is bounded, and the helper must respect that choice rather than hardcoding join.getLeft.
+    long bound =
+        SideInputInListRule.determineBoundedSize((Join) join, ((Join) join).getLeft());
     assertEquals(50L, bound);
+  }
+
+  @Test
+  void determineBoundedSizeRespectsRightAsBoundedInput() {
+    // Mirror of the above, but with the limit on the right subtree — simulates Calcite's
+    // JoinCommuteRule having placed the bounded input on the right. Passing join.getRight()
+    // (not getLeft()) as the bounded argument must return the correct bound.
+    RelNode join =
+        builder
+            .scan("os")
+            .scan("ch")
+            .limit(0, 75)
+            .join(
+                JoinRelType.INNER,
+                builder.equals(builder.field(2, 0, 0), builder.field(2, 1, 0)))
+            .build();
+    long bound =
+        SideInputInListRule.determineBoundedSize((Join) join, ((Join) join).getRight());
+    assertEquals(75L, bound);
   }
 
   // Note: a previous "determineBoundedSizeReturnsMinusOneWhenLeftIsUnbounded" test was dropped

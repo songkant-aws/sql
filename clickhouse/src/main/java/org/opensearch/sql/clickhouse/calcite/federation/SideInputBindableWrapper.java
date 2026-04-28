@@ -112,32 +112,42 @@ public final class SideInputBindableWrapper implements PreparedResult {
       // Plan shape changed between prepare and bind — degrade to the inner bindable.
       return inner.bind(ctx);
     }
-    if (!hasSideInputMarker(join.getRight())) {
-      // No ARRAY_IN(?0) marker on the right after all — fall back to the generated code unmodified.
+    // Detect which side carries the ARRAY_IN marker — that's the JDBC side (the one we filter).
+    // The other child is the bounded side to drain. Calcite's JoinCommuteRule can place the
+    // JDBC input on either child, so we can't hardcode getRight(); we probe both.
+    SideInputSide side = detectMarkerSide(join);
+    if (side == null) {
+      // No ARRAY_IN(?0) marker on either side after all — fall back to the generated code
+      // unmodified. (findBoundedJoin already required a marker, so this is defensive.)
       return inner.bind(ctx);
     }
 
-    // Determine the left-key column for distinct-key extraction. The filter's key column is the
-    // *right* key; the corresponding *left* key is what we drain out of the left enumerable, so
-    // we recover it from the join condition.
-    int leftKeyIdx = extractLeftKeyIndex(join);
-    if (leftKeyIdx < 0) {
+    RelNode boundedInput =
+        side == SideInputSide.RIGHT_IS_JDBC ? join.getLeft() : join.getRight();
+
+    // Determine the bounded-side key column for distinct-key extraction. For RIGHT_IS_JDBC this
+    // is the left-side key; for LEFT_IS_JDBC it's the right-side key. Delegates to the shared
+    // equality-decomposer.
+    int boundedKeyIdx = extractBoundedKeyIndex(join, side);
+    if (boundedKeyIdx < 0) {
       LOG.warn(
-          "SideInputBindableWrapper: could not extract left-side key index from join condition;"
-              + " falling back to un-pushed execution. condition={}",
-          join.getCondition());
+          "SideInputBindableWrapper: could not extract bounded-side key index from join condition;"
+              + " falling back to un-pushed execution. condition={}, side={}",
+          join.getCondition(),
+          side);
       return inner.bind(ctx);
     }
 
     // The dialect-specific JDBC array type tag (e.g. "Int64" for ClickHouse) is needed by
-    // java.sql.Connection.createArrayOf. We resolve it from the right-side JDBC connection's
-    // column metadata via the scan's row-type — Calcite's PplFederationDialect registry guards
-    // that supportsArrayInListParam() is true before the rule fires, so DataSource must exist.
-    DataSource rightDs = resolveRightDataSource(join);
-    if (rightDs == null) {
+    // java.sql.Connection.createArrayOf. We resolve it from the JDBC connection's column metadata
+    // via the scan's row-type — PplFederationDialect registry guards that supportsArrayInListParam
+    // is true before the rule fires, so DataSource must exist.
+    DataSource jdbcDs = resolveJdbcDataSource(join, side);
+    if (jdbcDs == null) {
       LOG.warn(
-          "SideInputBindableWrapper: right-side DataSource unresolved; falling back to un-pushed"
-              + " execution.");
+          "SideInputBindableWrapper: JDBC DataSource unresolved on side={}; falling back to"
+              + " un-pushed execution.",
+          side);
       return inner.bind(ctx);
     }
 
@@ -149,9 +159,9 @@ public final class SideInputBindableWrapper implements PreparedResult {
       maxSize = 10_000L;
     }
 
-    Enumerable<Object[]> leftEnum = execLeft(join.getLeft(), ctx);
+    Enumerable<Object[]> boundedEnum = execLeft(boundedInput, ctx);
     SideInputDrainEnumerable.Result drained =
-        SideInputDrainEnumerable.drain(leftEnum, leftKeyIdx, maxSize);
+        SideInputDrainEnumerable.drain(boundedEnum, boundedKeyIdx, maxSize);
 
     // Prefer binding the distinct keys as a real java.sql.Array so Calcite's
     // ResultSetEnumerable.setDynamicParam routes through PreparedStatement.setArray — the
@@ -165,7 +175,7 @@ public final class SideInputBindableWrapper implements PreparedResult {
     // avoids relying on driver-specific client-side interpolation timing (clickhouse-jdbc
     // 0.6.5 happens to read the array contents eagerly at bind, but that's a driver behaviour,
     // not a JDBC guarantee). See {@link #closingOnEnumeratorClose}.
-    SqlArrayBinding binding = wrapAsSqlArrayIfPossible(rightDs, drained.distinctKeys());
+    SqlArrayBinding binding = wrapAsSqlArrayIfPossible(jdbcDs, drained.distinctKeys());
     if (binding != null && binding.connection != null) {
       // Guard the bind path: if bindInListParam or inner.bind throws before we hand the
       // connection off to closingOnEnumeratorClose, the caller will never see the enumerator and
@@ -187,6 +197,69 @@ public final class SideInputBindableWrapper implements PreparedResult {
     // Object[] fallback path: no owning Connection to close, so no guard needed.
     DataContext bound = bindInListParam(ctx, drained.distinctKeys());
     return inner.bind(bound);
+  }
+
+  /**
+   * Returns which child of {@code join} carries the {@link JdbcSideInputFilter#ARRAY_IN_OP}
+   * marker (and is therefore the JDBC input we'll filter). Returns {@code null} if neither child
+   * carries the marker (defensive — callers normally verify presence via
+   * {@link #findBoundedJoin} first).
+   */
+  @VisibleForTesting
+  static SideInputSide detectMarkerSide(Join join) {
+    boolean rightHas = hasSideInputMarker(join.getRight());
+    boolean leftHas = hasSideInputMarker(join.getLeft());
+    if (rightHas) {
+      return SideInputSide.RIGHT_IS_JDBC;
+    }
+    if (leftHas) {
+      return SideInputSide.LEFT_IS_JDBC;
+    }
+    return null;
+  }
+
+  /**
+   * Returns the bounded-side key column index by delegating to the appropriate left/right
+   * extractor based on {@code side}. Returns {@code -1} if the join condition isn't a single
+   * binary equality on two {@link org.apache.calcite.rex.RexInputRef}s.
+   */
+  @VisibleForTesting
+  static int extractBoundedKeyIndex(Join join, SideInputSide side) {
+    // Bounded side = the non-JDBC side. If JDBC is on the right, bounded is the left; vice versa.
+    if (side == SideInputSide.RIGHT_IS_JDBC) {
+      return extractLeftKeyIndex(join);
+    }
+    return extractRightKeyIndex(join);
+  }
+
+  /** Returns the right-side key column index for the bounded join, or {@code -1} if N/A. */
+  private static int extractRightKeyIndex(Join join) {
+    if (!(join.getCondition() instanceof org.apache.calcite.rex.RexCall)) {
+      return -1;
+    }
+    org.apache.calcite.rex.RexCall cond = (org.apache.calcite.rex.RexCall) join.getCondition();
+    if (cond.getKind() != org.apache.calcite.sql.SqlKind.EQUALS
+        || cond.getOperands().size() != 2) {
+      return -1;
+    }
+    org.apache.calcite.rex.RexNode l = cond.getOperands().get(0);
+    org.apache.calcite.rex.RexNode r = cond.getOperands().get(1);
+    if (!(l instanceof org.apache.calcite.rex.RexInputRef)
+        || !(r instanceof org.apache.calcite.rex.RexInputRef)) {
+      return -1;
+    }
+    int leftFieldCount = join.getLeft().getRowType().getFieldCount();
+    int li = ((org.apache.calcite.rex.RexInputRef) l).getIndex();
+    int ri = ((org.apache.calcite.rex.RexInputRef) r).getIndex();
+    // Right-side key = the index whose absolute ref is >= leftFieldCount. Return the index
+    // *into the right row type* (i.e. subtract leftFieldCount).
+    if (ri >= leftFieldCount && li < leftFieldCount) {
+      return ri - leftFieldCount;
+    }
+    if (li >= leftFieldCount && ri < leftFieldCount) {
+      return li - leftFieldCount;
+    }
+    return -1;
   }
 
   /**
@@ -614,13 +687,14 @@ public final class SideInputBindableWrapper implements PreparedResult {
   }
 
   /**
-   * Resolves the {@link DataSource} for the JDBC right-side of {@code join}. Tries the
-   * public-field path first ({@code scan.jdbcTable.jdbcSchema.getDataSource()}); falls back to
-   * {@link org.apache.calcite.schema.Table#unwrap(Class)} if the public fields are somehow not
-   * reachable (e.g. planner-visibility shenanigans in future Calcite upgrades).
+   * Resolves the {@link DataSource} for the JDBC side of {@code join} indicated by {@code side}.
+   * Tries the public-field path first ({@code scan.jdbcTable.jdbcSchema.getDataSource()}); falls
+   * back to {@link org.apache.calcite.schema.Table#unwrap(Class)} if the public fields are
+   * somehow not reachable (e.g. planner-visibility shenanigans in future Calcite upgrades).
    */
-  static DataSource resolveRightDataSource(Join join) {
-    RelNode stripped = unwrap(join.getRight());
+  static DataSource resolveJdbcDataSource(Join join, SideInputSide side) {
+    RelNode stripped =
+        unwrap(side == SideInputSide.RIGHT_IS_JDBC ? join.getRight() : join.getLeft());
     if (!(stripped instanceof JdbcToEnumerableConverter)) {
       return null;
     }
@@ -636,9 +710,10 @@ public final class SideInputBindableWrapper implements PreparedResult {
     }
   }
 
-  /** Returns the dialect of the right-side JDBC subtree via its {@link JdbcConvention}. */
-  static JdbcConvention resolveRightJdbcConvention(Join join) {
-    RelNode stripped = unwrap(join.getRight());
+  /** Returns the dialect of the JDBC subtree on {@code side} via its {@link JdbcConvention}. */
+  static JdbcConvention resolveJdbcConvention(Join join, SideInputSide side) {
+    RelNode stripped =
+        unwrap(side == SideInputSide.RIGHT_IS_JDBC ? join.getRight() : join.getLeft());
     if (!(stripped instanceof JdbcToEnumerableConverter)) {
       return null;
     }
@@ -654,19 +729,22 @@ public final class SideInputBindableWrapper implements PreparedResult {
   }
 
   /**
-   * Locates the first {@link Join} under {@code root} whose right subtree contains an {@link
-   * JdbcSideInputFilter#ARRAY_IN_OP} marker. Detecting the target by the marker (rather than by
-   * the {@code bounded_left} hint) is necessary because Volcano's {@code EnumerableJoinRule.convert}
-   * strips hints during the {@code LogicalJoin} -> {@code EnumerableHashJoin} conversion. Using the
-   * operator (rather than the {@link JdbcSideInputFilter} subclass) is necessary because Calcite's
-   * {@code FilterMergeRule} can merge our filter with an adjacent user filter into a plain {@link
-   * Filter}, losing the subtype while preserving the {@code ARRAY_IN} call in the condition.
+   * Locates the first {@link Join} under {@code root} whose left OR right subtree contains an
+   * {@link JdbcSideInputFilter#ARRAY_IN_OP} marker. Detecting the target by the marker (rather
+   * than by the {@code bounded_left} hint) is necessary because Volcano's {@code
+   * EnumerableJoinRule.convert} strips hints during the {@code LogicalJoin} → physical-join
+   * conversion. Using the operator (rather than the {@link JdbcSideInputFilter} subclass) is
+   * necessary because Calcite's {@code FilterMergeRule} can merge our filter with an adjacent
+   * user filter into a plain {@link Filter}, losing the subtype while preserving the {@code
+   * ARRAY_IN} call in the condition. Probing *both* children (not just the right) is necessary
+   * because Calcite's {@code JoinCommuteRule} and cost-based input reordering can place the JDBC
+   * subtree on either side.
    */
   static Join findBoundedJoin(RelNode root) {
     RelNode cur = unwrap(root);
     if (cur instanceof Join) {
       Join j = (Join) cur;
-      if (hasSideInputMarker(j.getRight())) {
+      if (hasSideInputMarker(j.getRight()) || hasSideInputMarker(j.getLeft())) {
         return j;
       }
     }

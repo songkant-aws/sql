@@ -36,48 +36,47 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Volcano-phase rule matching any {@link Join} with a bounded left side and a right input that is a
- * {@link JdbcToEnumerableConverter}. Rewrites the right JDBC subtree to insert a {@link
- * JdbcSideInputFilter} above the base {@link JdbcTableScan}, enabling runtime {@code WHERE key IN
- * (?)} binding from the drained left side of the join.
+ * Volcano-phase rule matching any {@link Join} that has a {@link JdbcToEnumerableConverter} on one
+ * side (left or right) and a statically-bounded input on the other side. Rewrites the JDBC subtree
+ * to insert a {@link JdbcSideInputFilter} above the base {@link JdbcTableScan}, enabling runtime
+ * {@code WHERE key IN (?)} binding from the drained bounded side of the join.
  *
  * <p>The operand is {@link Join} (rather than a specific physical subtype) so the rule fires on
  * {@code EnumerableHashJoin}, {@code EnumerableMergeJoin}, and {@code EnumerableNestedLoopJoin}
- * alike — all three use the left input as the driving/build side, so draining the left to populate
- * the right-side IN-list is semantically sound for each.
+ * alike — all three fully scan both inputs, so draining one to populate the other's IN-list is
+ * semantically sound for each.
  *
- * <p><b>Join-type guard.</b> Filtering the right to {@code key IN (<left keys>)} is semantically
- * correct only for join types where right-side rows with no left match are already excluded from
- * the result:
+ * <p><b>JDBC-on-either-side.</b> Calcite's Volcano planner (specifically rules like {@code
+ * JoinCommuteRule} and cost-based input reordering) can place the JDBC input on either the left or
+ * the right child of the physical join node — which side wins is not stable across plans and has
+ * no correspondence with the PPL {@code left=} / {@code right=} syntax. The rule therefore probes
+ * both children for a {@link JdbcToEnumerableConverter} and picks whichever one is JDBC as the
+ * side to filter (and the other as the side to drain).
  *
- * <ul>
- *   <li>{@link JoinRelType#INNER} / {@link JoinRelType#LEFT}: only rows with a right match
- *       (possibly empty for LEFT) appear; filtering right to {@code IN (left keys)} cannot drop a
- *       row that would otherwise contribute.
- *   <li>{@link JoinRelType#SEMI} / {@link JoinRelType#ANTI}: right rows only act as existence
- *       probes; filtering them to {@code IN (left keys)} preserves the per-left-key EXISTS answer
- *       because right rows whose key is not in the left set never match any left row.
- *   <li>{@link JoinRelType#RIGHT} / {@link JoinRelType#FULL}: unmatched right rows must survive in
- *       the output. Filtering right to {@code IN (left keys)} would drop exactly those unmatched
- *       rows, producing wrong results. The rule rejects these.
- * </ul>
+ * <p><b>Join-type guard.</b> Filtering the JDBC side to {@code key IN (<bounded keys>)} is
+ * semantically correct only for join types where JDBC rows with no bounded-side match are already
+ * excluded from the result. This depends on which side the JDBC input is on — directional outer
+ * joins ({@link JoinRelType#LEFT} / {@link JoinRelType#RIGHT}) preserve unmatched rows on their
+ * named side, and dropping those rows via IN-list filtering would silently produce wrong results.
+ * The full truth table is in {@link #isJoinTypeCompatibleWithInListPushdown(JoinRelType,
+ * SideInputSide)}.
  *
  * <p>No-ops if:
  *
  * <ul>
- *   <li>the join type is {@link JoinRelType#RIGHT} or {@link JoinRelType#FULL} (see above),
- *   <li>the join is not statically-provably bounded on its left side (neither a {@code
+ *   <li>neither child of the join is a {@link JdbcToEnumerableConverter} (after stripping {@link
+ *       HepRelVertex}/{@link RelSubset} wrappers),
+ *   <li>the join type + JDBC-side combination is not in the compatible set (see above),
+ *   <li>the non-JDBC (bounded) side is not statically-provably bounded (neither a {@code
  *       bounded_left} hint nor {@link RelMetadataQuery#getMaxRowCount} yields an upper bound
  *       &le; {@link #METADATA_BOUND_CEILING}),
- *   <li>the right side is not a {@link JdbcToEnumerableConverter} (after stripping {@link
- *       HepRelVertex}/{@link RelSubset} wrappers),
- *   <li>the right-side JDBC dialect does not advertise {@link
+ *   <li>the JDBC dialect does not advertise {@link
  *       PplFederationDialect#supportsArrayInListParam()},
- *   <li>the proven upper bound exceeds the right-side dialect's {@link
+ *   <li>the proven upper bound exceeds the JDBC dialect's {@link
  *       PplFederationDialect#getInListPushdownThreshold()},
  *   <li>the join condition isn't a single binary equality on two {@link RexInputRef}s,
- *   <li>a {@link JdbcSideInputFilter} already exists anywhere on the right JDBC subtree
- *       (idempotence guard).
+ *   <li>a {@link JdbcSideInputFilter} already exists anywhere on the JDBC subtree (idempotence
+ *       guard).
  * </ul>
  *
  * <p>This rule does NOT participate in runtime drain/bind — that is the responsibility of Tasks
@@ -106,38 +105,41 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
   public void onMatch(RelOptRuleCall call) {
     Join join = call.rel(0);
 
-    // 0. join-type guard: only fire on join types where pruning right-side rows whose key is not
-    //    in the left-key set preserves the result. See class javadoc for the full derivation. In
-    //    particular RIGHT/FULL outer joins surface right rows with no left match, and filtering
-    //    those out would silently drop correct rows.
-    if (!isJoinTypeCompatibleWithInListPushdown(join.getJoinType())) {
+    // 1. detect which side is JDBC. Volcano's JoinCommuteRule / cost-based reordering makes the
+    //    JDBC-input-position unstable — it may end up on either child. We probe both and pick
+    //    whichever is JdbcToEnumerableConverter; the other child is the bounded / drainable side.
+    SideInputSide side = detectJdbcSide(join);
+    if (side == null) {
       return;
     }
 
-    // 1. boundedness: prefer the bounded_left hint (set in HEP by BoundedJoinHintRule), but fall
-    //    back to structural row-count metadata. Calcite's EnumerableJoinRule.convert path does not
-    //    propagate hints onto the physical join node, so by the time this Volcano rule fires the
-    //    hint is typically gone. The metadata fallback recovers structural proofs like a
-    //    Sort(fetch) on the left subtree (exactly what `| head N` produces) so we still fire on
-    //    bounded-left joins even when the hint has been stripped.
-    long boundedSize = determineBoundedSize(join);
+    // 2. join-type guard: the compatibility answer depends on which side is JDBC. See
+    //    isJoinTypeCompatibleWithInListPushdown for the full truth table.
+    if (!isJoinTypeCompatibleWithInListPushdown(join.getJoinType(), side)) {
+      return;
+    }
+
+    RelNode jdbcInput = unwrap(side == SideInputSide.RIGHT_IS_JDBC ? join.getRight() : join.getLeft());
+    RelNode boundedInput = side == SideInputSide.RIGHT_IS_JDBC ? join.getLeft() : join.getRight();
+    JdbcToEnumerableConverter converter = (JdbcToEnumerableConverter) jdbcInput;
+
+    // 3. boundedness: prefer the bounded_left hint (set in HEP by BoundedJoinHintRule), but fall
+    //    back to structural row-count metadata on the bounded-side subtree. Calcite's
+    //    EnumerableJoinRule.convert path does not propagate hints onto the physical join node,
+    //    so by the time this Volcano rule fires the hint is typically gone. The metadata
+    //    fallback recovers structural proofs like a Sort(fetch) on the bounded subtree (exactly
+    //    what `| head N` produces) so we still fire even when the hint has been stripped.
+    long boundedSize = determineBoundedSize(join, boundedInput);
     if (boundedSize < 0) {
       return;
     }
-
-    // 3. right input must be JdbcToEnumerableConverter (strip planner wrappers)
-    RelNode strippedRight = unwrap(join.getRight());
-    if (!(strippedRight instanceof JdbcToEnumerableConverter)) {
-      return;
-    }
-    JdbcToEnumerableConverter converter = (JdbcToEnumerableConverter) strippedRight;
 
     // 4. idempotence: skip if subtree already contains a JdbcSideInputFilter
     if (containsSideInputFilter(converter)) {
       return;
     }
 
-    // 5. find deepest JdbcTableScan on the right JDBC subtree
+    // 5. find deepest JdbcTableScan on the JDBC subtree
     JdbcTableScan scan = findDeepestJdbcTableScan(converter);
     if (scan == null) {
       return;
@@ -162,22 +164,21 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
       return;
     }
 
-    // 7. compute right key index from a single binary equality condition
-    Integer rightKeyIdx = extractRightKeyIndex(join);
-    if (rightKeyIdx == null) {
+    // 7. compute JDBC-side key index from a single binary equality condition
+    Integer jdbcKeyIdx = extractJdbcKeyIndex(join, side);
+    if (jdbcKeyIdx == null) {
       return;
     }
 
-    // 7a. translate the key index from the right-subtree root row type down to the scan row type.
-    //     `rightKeyIdx` is an index into `strippedRight.getRowType()` (the converter's output),
-    //     but we wrap the scan at the bottom of the subtree. Intervening JdbcAggregate and
-    //     JdbcProject reorder/rename columns, so the same index can select a different column
-    //     against the scan (e.g. an aggregate output (s, user_id) vs. a scan (user_id, v) —
-    //     index 1 selects `user_id` at the aggregate and `v` at the scan). Map by column name.
-    int scanKeyIdx = mapRightKeyToScan(strippedRight, rightKeyIdx, scan);
+    // 7a. translate the key index from the JDBC-subtree root row type down to the scan row type.
+    //     `jdbcKeyIdx` is an index into `jdbcInput.getRowType()` (the converter's output), but we
+    //     wrap the scan at the bottom of the subtree. Intervening JdbcAggregate and JdbcProject
+    //     reorder/rename columns, so the same index can select a different column against the
+    //     scan (e.g. an aggregate output (s, user_id) vs. a scan (user_id, v) — index 1 selects
+    //     `user_id` at the aggregate and `v` at the scan). Map by column name.
+    int scanKeyIdx = mapRightKeyToScan(jdbcInput, jdbcKeyIdx, scan);
     if (scanKeyIdx < 0) {
-      LOG.debug(
-          "SideInputInListRule: right-top key name not found in scan row type; skipping");
+      LOG.debug("SideInputInListRule: JDBC-top key name not found in scan row type; skipping");
       return;
     }
 
@@ -188,12 +189,12 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
               + " pushdown may cause row fan-out at runtime. Proceeding anyway.");
     }
 
-    // 9. build an array-typed RexDynamicParam (index 0) of the right key's column type
+    // 9. build an array-typed RexDynamicParam (index 0) of the JDBC key's column type
     RexBuilder rexBuilder = join.getCluster().getRexBuilder();
     RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
     RelDataType keyType = scan.getRowType().getFieldList().get(scanKeyIdx).getType();
     RelDataType arrayType = typeFactory.createArrayType(keyType, -1);
-    // Index 0 reserved for bounded-left IN-list binding; Task 12's runtime binder relies on this.
+    // Index 0 reserved for the bounded-side IN-list binding; the runtime binder relies on this.
     // Don't reuse index 0 for any other federation rule without updating the binder contract.
     RexDynamicParam arrayParam = rexBuilder.makeDynamicParam(arrayType, 0);
 
@@ -209,13 +210,15 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     // 11. rebuild the JdbcToEnumerableConverter over the new subtree
     RelNode newConverter = converter.copy(converter.getTraitSet(), List.of(newJdbcTree));
 
-    // 12. rebuild the Join with the new right child
+    // 12. rebuild the Join with the new child on whichever side the JDBC input is
+    RelNode newLeft = side == SideInputSide.LEFT_IS_JDBC ? newConverter : join.getLeft();
+    RelNode newRight = side == SideInputSide.RIGHT_IS_JDBC ? newConverter : join.getRight();
     RelNode newJoin =
         join.copy(
             join.getTraitSet(),
             join.getCondition(),
-            join.getLeft(),
-            newConverter,
+            newLeft,
+            newRight,
             join.getJoinType(),
             join.isSemiJoinDone());
 
@@ -223,20 +226,107 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
   }
 
   /**
-   * Returns {@code true} if filtering the right input to {@code key IN (<left keys>)} preserves
-   * join semantics for {@code type}. See class javadoc for the per-type derivation. Kept as a
-   * separate helper (rather than inlined in {@link #onMatch}) so unit tests can pin the
-   * per-join-type decision without exercising the full rule machinery.
+   * Probes both children of {@code join} for a {@link JdbcToEnumerableConverter} and returns which
+   * side carries it. Returns {@code null} if neither side (or both sides — a JDBC-to-JDBC join is
+   * outside the scope of this rule) is JDBC. Strips {@link HepRelVertex}/{@link RelSubset}
+   * planner wrappers before checking.
    */
   @VisibleForTesting
-  static boolean isJoinTypeCompatibleWithInListPushdown(JoinRelType type) {
+  static SideInputSide detectJdbcSide(Join join) {
+    boolean leftIsJdbc = unwrap(join.getLeft()) instanceof JdbcToEnumerableConverter;
+    boolean rightIsJdbc = unwrap(join.getRight()) instanceof JdbcToEnumerableConverter;
+    if (leftIsJdbc && !rightIsJdbc) {
+      return SideInputSide.LEFT_IS_JDBC;
+    }
+    if (rightIsJdbc && !leftIsJdbc) {
+      return SideInputSide.RIGHT_IS_JDBC;
+    }
+    return null;
+  }
+
+  /**
+   * Returns the JDBC-side key index for the given {@code side}, or {@code null} if the join
+   * condition isn't a single binary equality on two {@link RexInputRef}s. Delegates to the
+   * existing left/right extractors so the extraction math stays in one place.
+   */
+  @VisibleForTesting
+  static Integer extractJdbcKeyIndex(Join join, SideInputSide side) {
+    if (side == SideInputSide.RIGHT_IS_JDBC) {
+      return extractRightKeyIndex(join);
+    }
+    // LEFT_IS_JDBC: the JDBC key is the one whose RexInputRef.index is < leftFieldCount.
+    return extractLeftKeyIndex(join);
+  }
+
+  /**
+   * Mirror of {@link #extractRightKeyIndex} returning the left-side key index (i.e. the index
+   * into {@code join.getLeft().getRowType()} that appears in the equality condition).
+   */
+  private static Integer extractLeftKeyIndex(Join join) {
+    RexNode cond = join.getCondition();
+    if (!(cond instanceof RexCall)) {
+      return null;
+    }
+    RexCall call = (RexCall) cond;
+    if (call.getKind() != SqlKind.EQUALS || call.getOperands().size() != 2) {
+      return null;
+    }
+    RexNode l = call.getOperands().get(0);
+    RexNode r = call.getOperands().get(1);
+    if (!(l instanceof RexInputRef) || !(r instanceof RexInputRef)) {
+      return null;
+    }
+    int leftFieldCount = join.getLeft().getRowType().getFieldCount();
+    int li = ((RexInputRef) l).getIndex();
+    int ri = ((RexInputRef) r).getIndex();
+    if (li < leftFieldCount && ri >= leftFieldCount) {
+      return li;
+    }
+    if (ri < leftFieldCount && li >= leftFieldCount) {
+      return ri;
+    }
+    return null;
+  }
+
+  /**
+   * Returns {@code true} if filtering the JDBC input to {@code key IN (<bounded keys>)} preserves
+   * join semantics for the given ({@code type}, {@code side}) combination. Kept as a separate
+   * helper (rather than inlined in {@link #onMatch}) so unit tests can pin the per-combination
+   * decision without exercising the full rule machinery.
+   *
+   * <p>Truth table — filtering the JDBC side drops JDBC rows whose key is not in the bounded-key
+   * set. This is safe iff no such JDBC row could have been preserved in the final result:
+   *
+   * <table border="1">
+   *   <caption>IN-list pushdown correctness by ({@link JoinRelType}, {@link SideInputSide})</caption>
+   *   <tr><th>join type</th><th>JDBC on right (drain left)</th><th>JDBC on left (drain right)</th></tr>
+   *   <tr><td>{@link JoinRelType#INNER}</td><td>yes</td><td>yes</td></tr>
+   *   <tr><td>{@link JoinRelType#LEFT}</td><td>yes</td><td><b>no</b> (preserves left)</td></tr>
+   *   <tr><td>{@link JoinRelType#RIGHT}</td><td><b>no</b> (preserves right)</td><td>yes</td></tr>
+   *   <tr><td>{@link JoinRelType#FULL}</td><td>no</td><td>no</td></tr>
+   *   <tr><td>{@link JoinRelType#SEMI}</td><td>yes</td><td>yes</td></tr>
+   *   <tr><td>{@link JoinRelType#ANTI}</td><td>yes</td><td><b>no</b> (preserves left where no match)</td></tr>
+   * </table>
+   *
+   * <p>Derivation rule: directional outer-ish joins preserve rows on their "named" side, and
+   * filtering that side would drop rows that should survive. ANTI is a SEMI-variant preserving
+   * the left, so it has the same asymmetry as LEFT.
+   */
+  @VisibleForTesting
+  static boolean isJoinTypeCompatibleWithInListPushdown(JoinRelType type, SideInputSide side) {
     switch (type) {
       case INNER:
-      case LEFT:
       case SEMI:
-      case ANTI:
         return true;
+      case LEFT:
+      case ANTI:
+        // Both preserve left rows (LEFT: unmatched; ANTI: unmatched). Safe only when the filter
+        // lands on the right — i.e. JDBC is on the right.
+        return side == SideInputSide.RIGHT_IS_JDBC;
       case RIGHT:
+        // Preserves right rows (unmatched). Safe only when the filter lands on the left — i.e.
+        // JDBC is on the left.
+        return side == SideInputSide.LEFT_IS_JDBC;
       case FULL:
       default:
         return false;
@@ -253,15 +343,20 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
   }
 
   /**
-   * Returns a statically-provable upper bound for the left-side row count, or {@code -1} if none
-   * can be determined. Prefers the {@code bounded_left} hint when present; otherwise consults
-   * {@link RelMetadataQuery#getMaxRowCount(RelNode)}. The metadata path handles the common case
-   * where Volcano's {@code EnumerableJoinRule.convert} constructs a fresh physical join without
-   * copying hints — in that case Calcite's native {@code RelMdMaxRowCount} still returns the
-   * {@code Sort.fetch} value (which is what {@code | head N} produces upstream).
+   * Returns a statically-provable upper bound for the row count of {@code boundedInput}, or
+   * {@code -1} if none can be determined. Prefers the {@code bounded_left} hint on {@code join}
+   * when present; otherwise consults {@link RelMetadataQuery#getMaxRowCount(RelNode)} and
+   * structural/estimate fallbacks. The metadata path handles the common case where Volcano's
+   * {@code EnumerableJoinRule.convert} constructs a fresh physical join without copying hints —
+   * in that case Calcite's native {@code RelMdMaxRowCount} still returns the {@code Sort.fetch}
+   * value (which is what {@code | head N} produces upstream).
+   *
+   * <p>The {@code boundedInput} argument decouples this helper from the join's left/right
+   * positional convention: after {@code JoinCommuteRule} fires, the bounded (drainable) input can
+   * be on either child.
    */
   @VisibleForTesting
-  static long determineBoundedSize(Join join) {
+  static long determineBoundedSize(Join join, RelNode boundedInput) {
     RelHint hint = findBoundedLeftHint(join);
     if (hint != null) {
       String sizeStr = hint.kvOptions.get(BoundedJoinHintRule.HINT_SIZE_KEY);
@@ -275,31 +370,35 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     }
     try {
       RelMetadataQuery mq = join.getCluster().getMetadataQuery();
-      Double max = mq.getMaxRowCount(join.getLeft());
-      if (max != null && !max.isInfinite() && !max.isNaN() && max <= METADATA_BOUND_CEILING) {
+      Double max = mq.getMaxRowCount(boundedInput);
+      if (max != null && !max.isInfinite() && !max.isNaN() && max < METADATA_BOUND_CEILING) {
         return (long) Math.ceil(max);
       }
     } catch (Throwable t) {
       // metadata providers can throw CyclicMetadataException etc. — treat as "unknown"
       LOG.debug("SideInputInListRule: metadata getMaxRowCount threw; treating as unbounded", t);
     }
-    // Structural fallback: walk the left subtree for a LIMIT-ish node (Sort with a literal fetch,
-    // Calcite's EnumerableLimit, LogicalSort, etc.). Storage adapters that push LIMIT into the
-    // scan (e.g. OpenSearch's CalciteEnumerableIndexScan exposes its LIMIT only through a private
-    // PushDownContext and its `estimateRowCount` override, not through getMaxRowCount) defeat the
-    // metadata path; in that case we fall through to the per-rel estimate below.
-    long structural = walkForStaticFetch(unwrap(join.getLeft()));
-    if (structural >= 0 && structural <= METADATA_BOUND_CEILING) {
+    // Structural fallback: walk the bounded subtree for a LIMIT-ish node (Sort with a literal
+    // fetch, Calcite's EnumerableLimit, LogicalSort, etc.). Storage adapters that push LIMIT into
+    // the scan (e.g. OpenSearch's CalciteEnumerableIndexScan exposes its LIMIT only through a
+    // private PushDownContext and its `estimateRowCount` override, not through getMaxRowCount)
+    // defeat the metadata path; in that case we fall through to the per-rel estimate below.
+    long structural = walkForStaticFetch(unwrap(boundedInput));
+    if (structural >= 0 && structural < METADATA_BOUND_CEILING) {
       return structural;
     }
-    // Last resort: trust estimateRowCount when its value is small. Storage adapters that cap
-    // their estimate at a literal LIMIT (OpenSearch's CalciteEnumerableIndexScan) give a
-    // provable bound here; we deliberately only accept values <= the ceiling to avoid
-    // trusting Calcite's default 1e9-ish estimate.
+    // Last resort: trust estimateRowCount when its value is *strictly* below the ceiling. Strict
+    // inequality matters: several storage adapters (e.g. OpenSearch's CalciteEnumerableIndexScan)
+    // cap their estimate at the per-request maxResultWindow (default 10000 = the ceiling), which
+    // is *independent* of the actual LIMIT value — the adapter may paginate past the cap. An
+    // estimate equal to the ceiling is therefore ambiguous between "bounded at 10000" and
+    // "capped at 10000 but actually unbounded," and we cannot distinguish without peeking into
+    // adapter internals. Treating equality as unbounded is the safe side: the runtime drain
+    // throws SideInputBailout when it overshoots, which would surface as a 500 to the user.
     try {
       RelMetadataQuery mq = join.getCluster().getMetadataQuery();
-      Double est = mq.getRowCount(join.getLeft());
-      if (est != null && !est.isInfinite() && !est.isNaN() && est <= METADATA_BOUND_CEILING) {
+      Double est = mq.getRowCount(boundedInput);
+      if (est != null && !est.isInfinite() && !est.isNaN() && est < METADATA_BOUND_CEILING) {
         return (long) Math.ceil(est);
       }
     } catch (Throwable t) {
