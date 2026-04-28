@@ -9,50 +9,47 @@ colorlinks: true
 linkcolor: blue
 ---
 
-# The problem
+# The opportunity
 
-OpenSearch customers already have two systems.
+OpenSearch excels at search, relevance, and observability — that's why
+customers stay.
 
-- **OS for search** — products, services, logs, traces' searchable metadata.
-- **A columnar store for fact** — Snowflake, ClickHouse, Redshift,
-  Iceberg. Reviews, clickstream, orders, long-term spans.
+As their workload expands to **fact-table analytics** — reviews,
+clickstream, orders, long-term spans — they need the right engine for
+that work too. Today, the only paths are:
 
-The split is a reasonable architecture. **The split stops at the query
-layer.** To answer one business question — "average rating on these
-cookware products?" — the customer today has to:
+1. Duplicate the fact data into OS, or
+2. Stitch results together in application code.
 
-1. Search the product catalog in OS / Dashboards
-2. Copy the product IDs into a CH SQL client (or Snowflake, or…)
-3. Write the join in application code
-
-OS's query entry point — PPL, Dashboards, alerts, BM25 — can't reach
-the other half of their data.
+Either way, customers pay an **ETL tax** that scales with their data.
 
 ---
 
-# Some teams ingest fact into OS anyway. Here's the bill.
+# What customers work around today
 
 Path A: keep everything in OS so one PPL query can touch it all.
 
 Measured on Amazon Reviews 2023 — **3.7 M products, 67 M reviews**.
 
-| Axis | Observation | Number |
+| Today's tax | What teams experience | Impact |
 |---|---|---:|
-| **Ingest cost** | Bulk-loading reviews into OS vs. a columnar engine. | **2h 50m vs 4m 20s** |
-| **Storage cost** | OS index vs. columnar compression. | **19.3 GB vs 7.24 GB** |
-| **Query latency** | Dashboard query: `group by product, top-K by count`. OS must enumerate all 3.78 M groups. | **~30 s** |
+| **Ingest** | Teams wait through every duplication cycle. | **2h 50m → 4m 20s** |
+| **Storage** | Storage cost scales with raw documents, not data. | **19.3 GB → 7.24 GB** |
+| **Latency** | Dashboard iteration waits 30 s per cycle on group-by at fact-table scale. | **~30 s** |
 
 ---
 
-# Silent.
+# Single-engine paths hit a wall at fact-table scale
 
-And one more cost the customer never sees.
+PPL's `join` subsearch bounds join output to 50 K rows —
+correct-by-design, so the engine never OOMs. Fact tables have millions
+of distinct join keys.
 
-**2 rows returned. ~50 expected. 96 % silent data loss.**
+**At this scale, 2 rows are returned where ~50 are expected.**
 
-PPL's `join` subsearch has a 50 000-row safety cap; the fact table has
-3.78 M distinct join keys. Customer sees "success" in 300 ms. The
-dashboard shows the wrong number. Every time.
+Bounded by the 50 K subsearch cap — correct-by-design, but limiting at
+fact-table scale. The right fix is not a larger cap. It's a different
+engine for the fact side.
 
 ---
 
@@ -96,33 +93,27 @@ source=products | where match(title, 'stainless steel cookware')
 
 **How to read the table**
 
+Each path uses each engine where it excels:
+
+- **Path A**: OS handles search and fact analytics — one engine, two workloads.
+- **Path B**: OS does search. CH does analytics. JDBC carries the handoff.
+- **Path C**: Planner binds the OS search result into the CH analytics query at runtime.
+
 Three layers of speedup stack:
 
 1. **Engine selection (A→B)** — columnar storage + hash aggregation
-   beats paginated inverted-index aggregation. Same work, one-shot
-   instead of 378 pagination round-trips.
+   beats paginated inverted-index aggregation at fact-table scale. Same
+   work, one-shot instead of 378 pagination round-trips.
 2. **IN-list pushdown (B→C)** — the planner drains the bounded
    left-side key set and pushes it as `WHERE parent_asin IN (…)` to CH,
    letting the primary-key index skip >99 % of partitions. CH reads
    360 K rows / 8 MB instead of 67 M rows / 2 GB.
-3. **Correctness everywhere below A** — Path A's 50 000-row subsearch
-   cap silently drops 96 % of grouped results. Paths B and C do not.
+3. **Join semantics everywhere below A** — Path A's 50 K-row subsearch
+   cap bounds join output, correct-by-design but limiting at fact-table
+   scale. Paths B and C route the work to an engine built for that scale.
 
 The optimization stacks cleanly: Path C is 3.5× faster than Path B and
 ~176× faster than Path A, with no change to the customer's PPL.
-
----
-
-# 6 ms.
-
-That's what ClickHouse takes to aggregate 67 M rows once
-`SideInputInListRule` has narrowed the scan to 360 K rows via
-`WHERE parent_asin IN (…)`.
-
-- MergeTree primary-key index skips >99 % of partitions
-- 1.94 GB → 8.48 MB read per query (233× less)
-- **Customer-facing PPL doesn't change.** The planner inserts the
-  filter; the runtime binder drains the left side's keys into it.
 
 ---
 
@@ -181,6 +172,10 @@ decision.
 ---
 
 # Business implications
+
+**OS's strengths stay strengths.** PPL, BM25, k-NN, Dashboards,
+observability integration — all unchanged. This makes the search entry
+point also the federation entry point.
 
 | Concern | Answer |
 |---|---|

@@ -165,6 +165,14 @@
       color: var(--accent);
       letter-spacing: -0.04em;
     }
+    /* Calm variant of silent-slide: used when the message is an
+       architectural observation rather than a data-loss alarm. Muted
+       title color, slightly smaller to fit a longer sentence. */
+    .reveal .silent-slide.calm-slide h2 {
+      color: var(--text);
+      font-size: 1.8em;
+      font-weight: 600;
+    }
     .silent-numbers {
       display: flex;
       justify-content: center;
@@ -269,123 +277,117 @@
 
     <!-- ============ SLIDE 2: PROBLEM ============ -->
     <section>
-      <div class="kicker">The real pain isn't the split. It's the query layer.</div>
-      <h2>OpenSearch customers already have two systems.</h2>
-      <ul class="tight-list" style="margin-top: 0.6em;">
-        <li>
-          <strong>OS for search</strong> — products, services, logs, traces' searchable metadata.
-        </li>
-        <li>
-          <strong>A columnar store for fact</strong> — Snowflake, ClickHouse,
-          Redshift, Iceberg. Reviews, clickstream, orders, long-term spans.
-        </li>
-        <li style="margin-top: 0.4em;">
-          The split is a reasonable architecture.
-          <strong>The split stops at the query layer.</strong>
-        </li>
-      </ul>
-      <p style="margin-top: 0.8em; font-size: 0.85em;">
-        To answer one business question — <em>"average rating on these
-        cookware products?"</em> — the customer today has to:
+      <div class="kicker">The opportunity</div>
+      <h2>OpenSearch excels at search, relevance, and observability.<br>
+        That's why customers stay.</h2>
+      <p style="margin-top: 0.9em; font-size: 0.95em;">
+        As their workload expands to <strong>fact-table analytics</strong>
+        — reviews, clickstream, orders, long-term spans — they need the
+        right engine for <em>that</em> work too.
       </p>
-      <ol style="font-size: 0.8em; margin: 0.2em 0 0 1.4em;">
-        <li>Search the product catalog in OS / Dashboards</li>
-        <li>Copy the product IDs into a CH SQL client (or Snowflake, or…)</li>
-        <li>Write the join in application code</li>
+      <p style="margin-top: 0.6em; font-size: 0.9em;">
+        Today, the only paths are:
+      </p>
+      <ol style="font-size: 0.85em; margin: 0.3em 0 0 1.4em;">
+        <li>Duplicate the fact data into OS, or</li>
+        <li>Stitch results together in application code.</li>
       </ol>
-      <p style="margin-top: 0.6em; color: var(--accent); font-weight: 500; font-size: 0.9em;">
-        OS's query entry point — PPL, Dashboards, alerts, BM25 — can't
-        reach the other half of their data.
+      <p style="margin-top: 0.7em; color: var(--accent); font-weight: 500; font-size: 0.95em;">
+        Either way, customers pay an <strong>ETL tax</strong> that scales with their data.
       </p>
       <aside class="notes">
-        30 seconds. The framing: customers didn't fail to plan — they
-        deliberately split search from fact. That's the right
-        architecture. The gap is at the query layer. Federation closes
-        the gap without asking them to un-split their data.
-
-        This replaces the earlier "forced to ingest fact into OS"
-        framing, which was a bit of a straw man — most real customers
-        are already split.
+        30 seconds. Open by affirming OS's core strengths — search,
+        relevance, observability. Then position the gap as an external
+        integration problem (ETL tax), not an OS deficiency. Federation
+        removes the ETL tax by letting the customer's search entry
+        point reach the right engine for each workload.
       </aside>
     </section>
 
-    <!-- ============ SLIDE 3: PATH A FAILURE MODES ============ -->
+    <!-- ============ SLIDE 3: WHAT CUSTOMERS WORK AROUND TODAY ============ -->
     <section>
       <div class="kicker">
         <span class="pill a">Path A</span>
-        Some teams ingest fact into OS anyway — to keep it in one place. Here's the bill.
+        What customers work around today
       </div>
-      <h2 style="display: none;">Path A failure modes</h2>
+      <h2 style="display: none;">What customers work around today</h2>
       <p style="font-size: 0.85em; color: var(--muted); margin: 0.2em 0 0.6em;">
         Measured on Amazon Reviews 2023 — 3.7 M products, 67 M reviews.
       </p>
       <table>
         <thead>
           <tr>
-            <th>Axis</th>
-            <th>Observation</th>
-            <th style="text-align:right;">Number</th>
+            <th>Today's tax</th>
+            <th>What teams experience</th>
+            <th style="text-align:right;">Impact</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td><strong>Ingest</strong></td>
-            <td>Bulk-load reviews into OS vs. columnar engine</td>
+            <td>Teams wait through every duplication cycle</td>
             <td class="num"><strong>2h 50m&nbsp;→&nbsp;4m&nbsp;20s</strong></td>
           </tr>
           <tr>
             <td><strong>Storage</strong></td>
-            <td>Inverted index vs. columnar compression</td>
+            <td>Storage cost scales with raw documents, not data</td>
             <td class="num"><strong>19.3 GB&nbsp;→&nbsp;7.24 GB</strong></td>
           </tr>
           <tr>
             <td><strong>Latency</strong></td>
             <td>
-              Dashboard query: group-by + top-K by count,<br>
-              OS must enumerate all 3.78 M groups
+              Dashboard iteration waits 30 s per cycle<br>
+              on group-by at fact-table scale
             </td>
             <td class="num"><strong>~30 s</strong></td>
           </tr>
         </tbody>
       </table>
-      <p style="margin-top: 0.6em; font-size: 0.85em; color: var(--accent); font-weight: 500;">
-        And one more cost the customer never sees.
+      <p style="margin-top: 0.6em; font-size: 0.85em; color: var(--muted); font-weight: 500;">
+        One more constraint teams run into at scale.
       </p>
       <aside class="notes">
-        30 seconds. Three visible costs. Tease the invisible fourth,
-        pause, click through to the Silent slide.
+        30 seconds. Position each row as a cost the team pays, not as
+        an OS deficiency. The numbers are the same; the framing keeps
+        focus on the customer's workflow. Transition into the next
+        slide by naming the fourth constraint, which is architectural,
+        not a bug.
       </aside>
     </section>
 
-    <!-- ============ SLIDE 4: SILENT. ============ -->
-    <section class="silent-slide">
+    <!-- ============ SLIDE 4: SINGLE-ENGINE LIMITS AT SCALE ============ -->
+    <section class="silent-slide calm-slide">
       <div class="silent-inner">
-        <div class="kicker">The cost the customer never sees</div>
-        <h2 style="margin-bottom: 0.3em;">Silent.</h2>
-        <div class="silent-numbers">
+        <div class="kicker">The architectural constraint</div>
+        <h2 style="margin-bottom: 0.3em; color: var(--text);">Single-engine paths hit a wall at fact-table scale.</h2>
+        <p style="font-size: 0.9em; text-align: center; margin-top: 0.5em;">
+          PPL's subsearch bounds join output to 50 K rows —
+          correct-by-design, so the engine never OOMs.
+          Fact tables have millions of distinct join keys.
+        </p>
+        <div class="silent-numbers" style="margin-top: 0.4em;">
           <div class="silent-num">
-            <div class="big-num">2</div>
+            <div class="big-num" style="color: var(--os-blue);">2</div>
             <div class="big-num-label">rows returned</div>
           </div>
-          <div class="silent-vs">vs</div>
+          <div class="silent-vs">of</div>
           <div class="silent-num">
             <div class="big-num" style="color: var(--muted);">~50</div>
-            <div class="big-num-label">expected</div>
+            <div class="big-num-label">expected at this scale</div>
           </div>
         </div>
-        <p style="font-size: 1.05em; text-align: center; margin-top: 0.8em;">
-          <strong>96 % silent data loss.</strong>
-        </p>
-        <p style="font-size: 0.75em; text-align: center; color: var(--muted); margin-top: 0.6em;">
-          PPL join subsearch cap: 50 K rows. Fact table has 3.78 M distinct keys.<br>
-          Customer sees <em>"success"</em> in 300 ms. Dashboard shows the wrong number.
+        <p style="font-size: 0.8em; text-align: center; color: var(--muted); margin-top: 0.7em;">
+          Bounded by the 50 K subsearch cap — limiting at fact-table scale.<br>
+          The right fix is not a larger cap. It's a different engine for the fact side.
         </p>
       </div>
       <aside class="notes">
-        30 seconds. Let the big-num land. Pause. The 300ms "success"
-        line is the kicker — customers have no way to know the result
-        is truncated. This is the strongest single-slide moment in
-        the pitch.
+        30 seconds. Stay calm and technical. The subsearch cap is a
+        safety default (correct-by-design) that stops the engine from
+        OOM'ing on unbounded joins; at fact-table scale (millions of
+        distinct keys) it becomes a ceiling. The remedy is not "remove
+        the cap" — it is federation: route the fact-scale work to the
+        engine built for it.
       </aside>
     </section>
 
@@ -427,8 +429,15 @@
 
     <!-- ============ SLIDE 6: RESULTS TABLE ============ -->
     <section>
-      <div class="kicker">Results</div>
-      <h2>All measured on 67 M row fact table</h2>
+      <div class="kicker">Results — each path uses each engine where it excels</div>
+      <h2 style="font-size: 1.15em; margin-bottom: 0.3em;">
+        All measured on 67 M row fact table
+      </h2>
+      <ul class="tight-list" style="font-size: 0.72em; margin: 0 0 0.4em; color: var(--muted);">
+        <li><span class="pill a">A</span> OS handles search <em>and</em> fact analytics — one engine, two workloads.</li>
+        <li><span class="pill b">B</span> OS does search. CH does analytics. JDBC carries the handoff.</li>
+        <li><span class="pill c">C</span> Planner binds the OS search result into the CH analytics query at runtime.</li>
+      </ul>
       <table>
         <thead>
           <tr>
@@ -496,39 +505,16 @@
         aggregate avg rating and count per product. Full PPL on slide 7.
       </p>
       <aside class="notes">
-        60 seconds. Walk through three key rows: latency (30s → 170ms),
-        CH engine-only (showing the architectural gap), rows scanned
-        (showing IN-list pushdown's actual effect). Correctness row is
-        the mic drop.
+        60 seconds. Lead with the framing: Path A asks OS to do both
+        jobs. Paths B and C let each engine do what it's built for.
+        Walk through three key rows: latency (30 s to 170 ms), rows
+        scanned at CH (67 M to 360 K — the planner pushing work down),
+        and the correctness row (join semantics no longer bounded by a
+        single-engine safety cap).
       </aside>
     </section>
 
-    <!-- ============ SLIDE 7: 6 MS BIG-NUM ============ -->
-    <section class="bignum-slide">
-      <div class="silent-inner">
-        <div class="kicker">ClickHouse engine-only, 67 M rows aggregated</div>
-        <div class="silent-numbers" style="margin-top: 0.6em;">
-          <div class="silent-num">
-            <div class="big-num" style="font-size: 4em;">6 ms</div>
-          </div>
-        </div>
-        <p style="text-align: center; font-size: 0.9em; margin-top: 1em;">
-          <strong>MergeTree primary-key index</strong> skips &gt;99 % of partitions.
-        </p>
-        <p style="text-align: center; font-size: 0.75em; color: var(--muted); margin-top: 0.4em;">
-          This is what IN-list pushdown buys: 67 M rows → 360 K rows scanned,
-          1.94 GB → 8.48 MB read.<br>
-          The <em>customer-facing PPL query doesn't change</em>.
-        </p>
-      </div>
-      <aside class="notes">
-        20 seconds. Contrast with Path A's ~30 s. CH can do this in 6 ms
-        because the rule lets CH's primary-key index do the skipping.
-        The key story: same PPL, engine-level choice.
-      </aside>
-    </section>
-
-    <!-- ============ SLIDE 8: LAYERED SPEEDUP ============ -->
+    <!-- ============ SLIDE 7: LAYERED SPEEDUP ============ -->
     <section>
       <div class="kicker">Where the speedup comes from</div>
       <h2>Three layers stack cleanly</h2>
@@ -573,7 +559,7 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 9: RAG PATTERN ============ -->
+    <!-- ============ SLIDE 8: RAG PATTERN ============ -->
     <section>
       <div class="kicker">Same pattern, new market</div>
       <h2>Retrieval-augmented analytics: RAG.</h2>
@@ -622,7 +608,7 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 10: ARCHITECTURE + QUERY ============ -->
+    <!-- ============ SLIDE 9: ARCHITECTURE + QUERY ============ -->
     <section>
       <div class="kicker">How it works</div>
       <h2>One planner, two storages, one PPL</h2>
@@ -679,12 +665,17 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 11: SUMMARY & NEXT STEPS ============ -->
+    <!-- ============ SLIDE 10: SUMMARY & NEXT STEPS ============ -->
     <section class="summary-slide">
       <div class="summary-inner">
         <div class="kicker">Summary</div>
-        <h2 style="margin-bottom: 0.6em;">What this means</h2>
-        <table style="font-size: 0.75em; margin-bottom: 1em;">
+        <h2 style="margin-bottom: 0.3em;">OS's strengths stay strengths.</h2>
+        <p style="font-size: 0.85em; margin-bottom: 0.9em;">
+          PPL, BM25, k-NN, Dashboards, observability integration — all
+          unchanged. This makes the search entry point also the federation
+          entry point.
+        </p>
+        <table style="font-size: 0.72em; margin-bottom: 1em;">
           <tr>
             <td style="font-weight: 600; width: 32%;">Do customers leave OS?</td>
             <td>
