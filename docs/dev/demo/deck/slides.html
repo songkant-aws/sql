@@ -269,27 +269,52 @@
 
     <!-- ============ SLIDE 2: PROBLEM ============ -->
     <section>
-      <div class="kicker">The problem</div>
-      <h2>OpenSearch customers stay on OS.<br>Then they hit the analytics wall.</h2>
-      <ul class="tight-list" style="margin-top: 0.8em;">
-        <li>PPL, Dashboards, BM25, alerting, observability — all wired up on OS.</li>
-        <li>Customer entry point matters. Customers do <em>not</em> want to switch tools.</li>
-        <li>But analytics on <strong>large fact tables</strong> — reviews, clickstream, orders —
-            forces them to push fact data into OS.</li>
-        <li style="color: var(--accent); font-weight: 500;">
-          That one decision quietly breaks three things.
+      <div class="kicker">The real pain isn't the split. It's the query layer.</div>
+      <h2>OpenSearch customers already have two systems.</h2>
+      <ul class="tight-list" style="margin-top: 0.6em;">
+        <li>
+          <strong>OS for search</strong> — products, services, logs, traces' searchable metadata.
+        </li>
+        <li>
+          <strong>A columnar store for fact</strong> — Snowflake, ClickHouse,
+          Redshift, Iceberg. Reviews, clickstream, orders, long-term spans.
+        </li>
+        <li style="margin-top: 0.4em;">
+          The split is a reasonable architecture.
+          <strong>The split stops at the query layer.</strong>
         </li>
       </ul>
+      <p style="margin-top: 0.8em; font-size: 0.85em;">
+        To answer one business question — <em>"average rating on these
+        cookware products?"</em> — the customer today has to:
+      </p>
+      <ol style="font-size: 0.8em; margin: 0.2em 0 0 1.4em;">
+        <li>Search the product catalog in OS / Dashboards</li>
+        <li>Copy the product IDs into a CH SQL client (or Snowflake, or…)</li>
+        <li>Write the join in application code</li>
+      </ol>
+      <p style="margin-top: 0.6em; color: var(--accent); font-weight: 500; font-size: 0.9em;">
+        OS's query entry point — PPL, Dashboards, alerts, BM25 — can't
+        reach the other half of their data.
+      </p>
       <aside class="notes">
-        30 seconds. OS is the natural place for the customer query
-        layer. Fact data is the natural place for a columnar engine.
-        Today those two things fight each other.
+        30 seconds. The framing: customers didn't fail to plan — they
+        deliberately split search from fact. That's the right
+        architecture. The gap is at the query layer. Federation closes
+        the gap without asking them to un-split their data.
+
+        This replaces the earlier "forced to ingest fact into OS"
+        framing, which was a bit of a straw man — most real customers
+        are already split.
       </aside>
     </section>
 
     <!-- ============ SLIDE 3: PATH A FAILURE MODES ============ -->
     <section>
-      <div class="kicker"><span class="pill a">Path A</span> All-in-OpenSearch: three costs</div>
+      <div class="kicker">
+        <span class="pill a">Path A</span>
+        Some teams ingest fact into OS anyway — to keep it in one place. Here's the bill.
+      </div>
       <h2 style="display: none;">Path A failure modes</h2>
       <p style="font-size: 0.85em; color: var(--muted); margin: 0.2em 0 0.6em;">
         Measured on Amazon Reviews 2023 — 3.7 M products, 67 M reviews.
@@ -324,18 +349,18 @@
         </tbody>
       </table>
       <p style="margin-top: 0.6em; font-size: 0.85em; color: var(--accent); font-weight: 500;">
-        And there's a fourth — the one customers don't realize is happening.
+        And one more cost the customer never sees.
       </p>
       <aside class="notes">
-        30 seconds. Three costs: ingest, storage, latency. End with a
-        tease line that leads into the next slide.
+        30 seconds. Three visible costs. Tease the invisible fourth,
+        pause, click through to the Silent slide.
       </aside>
     </section>
 
     <!-- ============ SLIDE 4: SILENT. ============ -->
     <section class="silent-slide">
       <div class="silent-inner">
-        <div class="kicker">Correctness</div>
+        <div class="kicker">The cost the customer never sees</div>
         <h2 style="margin-bottom: 0.3em;">Silent.</h2>
         <div class="silent-numbers">
           <div class="silent-num">

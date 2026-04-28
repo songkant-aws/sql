@@ -11,16 +11,28 @@ linkcolor: blue
 
 # The problem
 
-OpenSearch customers stay on OS because it's their **query entry point** —
-PPL, Dashboards, BM25, alerting, observability are all wired up there.
+OpenSearch customers already have two systems.
 
-When those customers also need **analytics on large fact tables** —
-reviews, clickstream, orders — PPL forces them to push all fact data into
-OS. That one decision quietly breaks three things.
+- **OS for search** — products, services, logs, traces' searchable metadata.
+- **A columnar store for fact** — Snowflake, ClickHouse, Redshift,
+  Iceberg. Reviews, clickstream, orders, long-term spans.
+
+The split is a reasonable architecture. **The split stops at the query
+layer.** To answer one business question — "average rating on these
+cookware products?" — the customer today has to:
+
+1. Search the product catalog in OS / Dashboards
+2. Copy the product IDs into a CH SQL client (or Snowflake, or…)
+3. Write the join in application code
+
+OS's query entry point — PPL, Dashboards, alerts, BM25 — can't reach
+the other half of their data.
 
 ---
 
-# Three costs of all-in-OS (Path A)
+# Some teams ingest fact into OS anyway. Here's the bill.
+
+Path A: keep everything in OS so one PPL query can touch it all.
 
 Measured on Amazon Reviews 2023 — **3.7 M products, 67 M reviews**.
 
@@ -34,7 +46,7 @@ Measured on Amazon Reviews 2023 — **3.7 M products, 67 M reviews**.
 
 # Silent.
 
-There's a fourth cost — the one customers don't realize.
+And one more cost the customer never sees.
 
 **2 rows returned. ~50 expected. 96 % silent data loss.**
 
