@@ -78,16 +78,9 @@ cat > /mnt/ebs/ch-config.d/query-log.xml <<'EOF'
 </clickhouse>
 EOF
 
-# User config for the federation demo. The `default` user gets a
-# non-empty password because the OpenSearch SQL plugin's CLICKHOUSE
-# connector rejects registrations with "clickhouse.auth.type=basic
-# requires auth.username and auth.password" when password is empty.
-#
-# Security posture: the password is trivial ("demopass") because real
-# access control is enforced at the VPC SG layer (port 8123 is only
-# reachable from Machine A's SG). If you expose CH publicly, change this
-# to a strong secret and update register-datasource.sh accordingly.
-cat > /mnt/ebs/ch-config.d/users.xml <<'EOF'
+# Profile config (resource limits + query logging) goes in config.d.
+# This is additive to defaults, no override conflict.
+cat > /mnt/ebs/ch-config.d/profiles.xml <<'EOF'
 <clickhouse>
   <profiles>
     <default>
@@ -96,23 +89,6 @@ cat > /mnt/ebs/ch-config.d/users.xml <<'EOF'
       <log_queries>1</log_queries>
     </default>
   </profiles>
-  <users>
-    <default>
-      <password>demopass</password>
-      <networks>
-        <!-- Accept from VPC on both stacks. ::/0 alone does NOT cover
-             IPv4 in CH 24.x, so requests from a Machine A in 172.31.x/
-             10.x land with AUTHENTICATION_FAILED instead of the
-             expected success. The SG still controls which source IPs
-             can actually reach port 8123. -->
-        <ip>0.0.0.0/0</ip>
-        <ip>::/0</ip>
-      </networks>
-      <profile>default</profile>
-      <quota>default</quota>
-      <access_management>1</access_management>
-    </default>
-  </users>
   <quotas>
     <default>
       <interval>
@@ -130,6 +106,43 @@ EOF
 
 chown -R 101:101 /mnt/ebs/ch-config.d
 
+# User config must go in users.d (NOT config.d). Two hard-earned lessons:
+#
+#   1. The clickhouse/clickhouse-server:24.x image ships
+#      /etc/clickhouse-server/users.d/default-user.xml which restricts
+#      `default` to localhost-only (::1 + 127.0.0.1). That file is
+#      alphabetically later than any 00-*.xml we drop in, so its
+#      <networks> block WINS even with `replace="replace"` semantics on
+#      our file.
+#
+#   2. CH 24.x treats <ip>::/0</ip> as IPv6-only. A Machine A in IPv4
+#      space (172.31.x / 10.x) hits AUTHENTICATION_FAILED even with the
+#      right password. Must add <ip>0.0.0.0/0</ip> explicitly.
+#
+# Solution: use a zz- prefix so our file is loaded LAST, use
+# replace="replace" on <networks> so our IP list completely overrides the
+# upstream localhost-only list, and include both IPv4 and IPv6 wildcards.
+mkdir -p /mnt/ebs/ch-users.d
+cat > /mnt/ebs/ch-users.d/zz-demo-override.xml <<'EOF'
+<?xml version="1.0"?>
+<clickhouse>
+  <users>
+    <default>
+      <password>demopass</password>
+      <networks replace="replace">
+        <ip>0.0.0.0/0</ip>
+        <ip>::/0</ip>
+      </networks>
+      <profile>default</profile>
+      <quota>default</quota>
+      <access_management>1</access_management>
+    </default>
+  </users>
+</clickhouse>
+EOF
+
+chown -R 101:101 /mnt/ebs/ch-users.d
+
 # ------------------------------------------------------------
 # 5. Start ClickHouse container
 # ------------------------------------------------------------
@@ -144,6 +157,7 @@ docker run -d \
   -v /mnt/ebs/ch-data:/var/lib/clickhouse \
   -v /mnt/ebs/ch-logs:/var/log/clickhouse-server \
   -v /mnt/ebs/ch-config.d:/etc/clickhouse-server/config.d \
+  -v /mnt/ebs/ch-users.d:/etc/clickhouse-server/users.d \
   clickhouse/clickhouse-server:24.8
 
 # --network host so the container sees the EC2 private IP directly.
