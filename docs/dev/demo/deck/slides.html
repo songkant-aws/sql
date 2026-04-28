@@ -188,27 +188,48 @@
       font-weight: 300;
     }
 
-    /* Inline syntax highlighting for PPL code emphasis. */
-    .reveal pre code mark.hl-search {
+    /* Inline highlighting for PPL code emphasis. These blocks opt out of
+       highlight.js (no language-sql class; data-noescape on <code>) so the
+       <mark> tags render as actual HTML instead of getting escaped into
+       literal text by the syntax highlighter. */
+    .reveal pre.ppl-code {
+      box-shadow: none;
+    }
+    .reveal pre.ppl-code code {
+      display: block;
+      background: #2b2b2b;
+      color: #f8f8f2;
+      padding: 0.8em 1em;
+      border-radius: 6px;
+      font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+      line-height: 1.5;
+      white-space: pre;
+    }
+    .reveal pre.ppl-code mark.hl-search {
       background: #fef3c7;
       color: #92400e;
-      padding: 0 0.15em;
+      padding: 0 0.2em;
       border-radius: 3px;
+      font-weight: 600;
     }
-    .reveal pre code mark.hl-fed {
+    .reveal pre.ppl-code mark.hl-fed {
       background: #dbeafe;
       color: #1e40af;
-      padding: 0 0.15em;
+      padding: 0 0.2em;
       border-radius: 3px;
+      font-weight: 600;
     }
+    /* Inline marks outside code blocks (e.g. the caption lines). */
     .reveal mark.hl-search {
       background: #fef3c7;
       color: #92400e;
+      padding: 0 0.3em;
       border-radius: 3px;
     }
     .reveal mark.hl-fed {
       background: #dbeafe;
       color: #1e40af;
+      padding: 0 0.3em;
       border-radius: 3px;
     }
 
@@ -533,7 +554,7 @@
       <h2>Retrieval-augmented analytics: RAG.</h2>
       <div class="two-col" style="grid-template-columns: 1.1fr 1fr; gap: 1.2em;">
         <div>
-          <pre><code class="language-sql" style="font-size: 0.72em;">source=docs
+          <pre class="ppl-code"><code data-noescape style="font-size: 0.72em;">source=docs
 | where <mark class="hl-search">knn(embedding, [query_vec], k=50)</mark>
 | sort -_score
 | inner join left=d right=e
@@ -603,13 +624,13 @@
           <p style="font-size: 0.8em; margin-bottom: 0.4em;">
             <strong>The benchmark query (PPL)</strong>
           </p>
-          <pre><code class="language-sql" style="font-size: 0.75em;">source=products
+          <pre class="ppl-code"><code data-noescape style="font-size: 0.75em;">source=products
 | where <mark class="hl-search">match(title, 'stainless steel cookware')</mark>
 | sort -_score | head 50
 | inner join left=p right=r
     on p.parent_asin = r.parent_asin
   [ <mark class="hl-fed">source=ch.fed.reviews</mark>
-    | where timestamp > 1640995200000
+    | where timestamp &gt; 1640995200000
     | fields parent_asin, rating ]
 | stats avg(rating) as avg_r,
         count() as n by parent_asin</code></pre>
