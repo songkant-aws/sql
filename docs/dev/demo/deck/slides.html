@@ -829,8 +829,10 @@
         <div class="callout">
           <span class="callout-badge hl-join-badge">EnumerableHashJoin</span>
           <span class="callout-text">
-            <code>SideInputInListRule</code> operand — rule now fires on all
-            compatible join types (hash / merge / nested-loop).
+            Rule operand is <code>Join.class</code> — fires on hash, merge,
+            and nested-loop alike, since all three fully scan both inputs.
+            Join-type guard ensures correctness (inner joins always OK;
+            outer joins gated by which side the JDBC input is on).
           </span>
         </div>
         <div class="callout">
@@ -859,8 +861,21 @@
              GROUP BY
           3. JdbcAggregate — stays inside the JDBC subtree; CH does
              the aggregation and returns 14 rows, not raw reviews
-          4. EnumerableHashJoin — rule operand now covers all
-             compatible join types
+          4. EnumerableHashJoin — operand is Join.class so rule fires
+             on hash / merge / nested-loop alike; all three fully scan
+             both inputs so draining one to populate the other's
+             IN-list is semantically sound for each.
+
+        If asked about nested-loop specifically: IN-list pushdown
+        actually helps nested-loop the most — cuts O(m × n) to
+        O(m × k) where k is the bounded key count, because the inner
+        side scan is reduced by the primary-key index skip.
+
+        If asked about LEFT/RIGHT OUTER: the rule has a join-type
+        guard (isJoinTypeCompatibleWithInListPushdown). Directional
+        outer joins preserve unmatched rows on the outer side;
+        filtering those rows via IN-list would produce wrong results,
+        so the rule bails out in those combinations.
       </aside>
     </section>
 
