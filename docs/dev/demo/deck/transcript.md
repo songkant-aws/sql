@@ -33,10 +33,13 @@ customer is paying an **ETL tax that scales with their data**."
 
 ---
 
-## [on slide 3 — What customers work around today] — 30 s
+## [on slide 3 — What customers work around today] — 40 s
 
-"Here's what that tax looks like in a real workload — Amazon Reviews
-2023, 3.7 million products, 67 million reviews.
+"Here's what that tax looks like in a real workload.
+
+**Amazon Reviews 2023** — a public UCSD dataset. 3.7 million products,
+67 million reviews. End-to-end measurements, warm-run medians.
+Reproduction scripts in the repo.
 
 *Point at table rows.*
 
@@ -45,7 +48,7 @@ Teams wait nearly three hours per duplication cycle. Storage grows
 iteration is 30 seconds per cycle, because OS has to walk 3.78 million
 groups for one top-K query.
 
-And one more constraint teams run into at scale."
+*→ Transition:* **Three visible costs. Manageable. But there's a fourth that teams don't see coming.**"
 
 ---
 
@@ -85,8 +88,8 @@ the backend."
 
 *Pause on the results table. This is the core.*
 
-"Everything here is measured end-to-end on the 67-million-row fact
-table.
+"**Same dataset, same machines, three execution paths.** Everything
+end-to-end on the 67-million-row fact table.
 
 Each path uses each engine where it excels: Path A asks one engine to
 do two jobs; B and C let each engine do what it's built for.
@@ -104,7 +107,9 @@ does the aggregation in six milliseconds — it scans three-hundred-sixty
 thousand rows instead of sixty-seven million.
 
 **And**: Path A returned two rows where fifty were expected. Paths B
-and C return the complete eleven-hundred-ninety-seven."
+and C return the complete eleven-hundred-ninety-seven.
+
+*→ Transition:* **176× doesn't happen by accident. Here's how it decomposes.**"
 
 ---
 
@@ -211,14 +216,14 @@ Three regions. Color-coded for whoever's reading this later."
 |---|---|---|
 | 1. Title | 15 s | 0:15 |
 | 2. Opportunity | 30 s | 0:45 |
-| 3. Today's tax | 30 s | 1:15 |
-| 4. Single-engine wall | 30 s | 1:45 |
-| 5. Three paths | 25 s | 2:10 |
-| 6. Results | 60 s | 3:10 |
-| 7. Speedup layers | 45 s | 3:55 |
-| 8. RAG | 25 s | 4:20 |
-| 9. Architecture | 25 s | 4:45 |
-| 10. Close | 25 s | 5:10 |
+| 3. Today's tax (with methodology) | 40 s | 1:25 |
+| 4. Single-engine wall | 30 s | 1:55 |
+| 5. Three paths | 25 s | 2:20 |
+| 6. Results (with provenance one-liner) | 60 s | 3:20 |
+| 7. Speedup layers | 45 s | 4:05 |
+| 8. RAG | 25 s | 4:30 |
+| 9. Architecture | 25 s | 4:55 |
+| 10. Close | 25 s | 5:20 |
 
 Tight for a hard 4-minute slot. Cut candidates if the room is strict:
 
