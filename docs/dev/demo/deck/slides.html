@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PPL Federation — Leadership Pitch</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css" id="theme">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+  <style>
+    :root {
+      --os-blue: #005EB8;
+      --ch-yellow: #FFCC02;
+      --accent: #E85C41;
+      --muted: #6b7280;
+      --bg: #ffffff;
+      --text: #1f2937;
+      --panel: #f3f4f6;
+    }
+
+    .reveal {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                   "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+    }
+    .reveal h1, .reveal h2, .reveal h3 {
+      font-weight: 600;
+      text-transform: none;
+      letter-spacing: -0.02em;
+    }
+    .reveal h1 { font-size: 2.1em; }
+    .reveal h2 { font-size: 1.5em; margin-bottom: 0.5em; }
+    .reveal h3 { font-size: 1.15em; color: var(--muted); }
+    .reveal section { text-align: left; }
+    .reveal .title-slide { text-align: center; }
+
+    .reveal table {
+      font-size: 0.75em;
+      border-collapse: collapse;
+      margin: 0.5em auto;
+      width: 100%;
+    }
+    .reveal table th, .reveal table td {
+      border: 1px solid #d1d5db;
+      padding: 0.45em 0.6em;
+    }
+    .reveal table th {
+      background: var(--panel);
+      font-weight: 600;
+    }
+    .reveal table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .reveal table td strong, .reveal table th strong {
+      color: var(--accent);
+    }
+
+    .reveal pre { font-size: 0.6em; width: 100%; }
+    .reveal pre code { padding: 0.6em 1em; border-radius: 6px; }
+
+    .kicker {
+      color: var(--accent);
+      font-size: 0.65em;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 0.5em;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 0.15em 0.6em;
+      border-radius: 999px;
+      font-size: 0.6em;
+      font-weight: 600;
+      background: var(--panel);
+      color: var(--muted);
+      margin-right: 0.3em;
+    }
+    .pill.a { background: #fef3c7; color: #92400e; }
+    .pill.b { background: #dbeafe; color: #1e40af; }
+    .pill.c { background: #dcfce7; color: #166534; }
+
+    .big-num {
+      font-size: 2.4em;
+      font-weight: 700;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .big-num-label {
+      color: var(--muted);
+      font-size: 0.8em;
+    }
+
+    .three-layer {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 0.8em 1em;
+      align-items: center;
+      font-size: 0.8em;
+    }
+    .three-layer .arrow { color: var(--muted); }
+    .three-layer .from, .three-layer .to {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+
+    .ascii-art {
+      font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 0.52em;
+      line-height: 1.25;
+      white-space: pre;
+      background: var(--panel);
+      padding: 1em;
+      border-radius: 8px;
+    }
+
+    footer.footnote {
+      position: absolute;
+      bottom: 0.4em;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.45em;
+    }
+
+    .tight-list li { margin: 0.15em 0; }
+    .reveal ul { font-size: 0.85em; }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5em;
+    }
+
+    /* Speaker-notes visibility tweak */
+    .notes { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="reveal">
+  <div class="slides">
+
+    <!-- ============ SLIDE 1: TITLE ============ -->
+    <section class="title-slide">
+      <h1>PPL Federation</h1>
+      <h3 style="margin-top: 0.3em;">Same entry point.<br>Right engine for each workload.</h3>
+      <p style="margin-top: 2em; color: var(--muted); font-size: 0.8em;">
+        Songkan Tang &nbsp;·&nbsp; 2026-04-28
+      </p>
+      <aside class="notes">
+        15 seconds. Set up the tension: OpenSearch customers love OS
+        as their query entry point. This pitch is about what happens
+        when those same customers need analytics on big fact tables.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 2: PROBLEM ============ -->
+    <section>
+      <div class="kicker">The problem</div>
+      <h2>OpenSearch customers stay on OS.<br>Then they hit the analytics wall.</h2>
+      <ul class="tight-list" style="margin-top: 0.8em;">
+        <li>PPL, Dashboards, BM25, alerting, observability — all wired up on OS.</li>
+        <li>Customer entry point matters. Customers do <em>not</em> want to switch tools.</li>
+        <li>But analytics on <strong>large fact tables</strong> — reviews, clickstream, orders —
+            forces them to push fact data into OS.</li>
+        <li style="color: var(--accent); font-weight: 500;">
+          That one decision quietly breaks three things.
+        </li>
+      </ul>
+      <aside class="notes">
+        30 seconds. OS is the natural place for the customer query
+        layer. Fact data is the natural place for a columnar engine.
+        Today those two things fight each other.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 3: PATH A FAILURE MODES ============ -->
+    <section>
+      <div class="kicker"><span class="pill a">Path A</span> All-in-OpenSearch: four things break</div>
+      <h2 style="display: none;">Path A failure modes</h2>
+      <p style="font-size: 0.85em; color: var(--muted); margin: 0.2em 0 0.6em;">
+        Measured on Amazon Reviews 2023 — 3.7 M products, 67 M reviews.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Axis</th>
+            <th>Observation</th>
+            <th style="text-align:right;">Number</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Ingest</strong></td>
+            <td>Bulk-load reviews into OS vs. columnar engine</td>
+            <td class="num"><strong>2h 50m&nbsp;→&nbsp;4m&nbsp;20s</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Storage</strong></td>
+            <td>Inverted index vs. columnar compression</td>
+            <td class="num"><strong>19.3 GB&nbsp;→&nbsp;7.24 GB</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Latency</strong></td>
+            <td>
+              Dashboard query: group-by + top-K by count,<br>
+              OS must enumerate all 3.78 M groups
+            </td>
+            <td class="num"><strong>~30 s</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Correctness</strong></td>
+            <td>
+              PPL join subsearch has a 50 K-row safety cap.<br>
+              3.78 M distinct keys → <strong>96 % silent data loss</strong>
+            </td>
+            <td class="num"><strong>2 rows returned, ≈50 expected</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top: 0.5em; font-size: 0.8em;">
+        Customer gets <strong>wrong answers in 300 ms, or correct answers in 30 seconds</strong>.
+        Neither works for a real dashboard.
+      </p>
+      <aside class="notes">
+        45 seconds. Spend the most time on the correctness row — this
+        is the one customers don't realize is happening. 96% silent
+        data loss + a 300ms response feels successful to the operator.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 4: THREE PATHS ============ -->
+    <section>
+      <div class="kicker">The fix</div>
+      <h2>Three execution paths. Same PPL query.</h2>
+      <div style="margin-top: 0.6em;">
+        <p>
+          <span class="pill a">Path A</span>
+          <strong>All data in OS.</strong> Today's default.
+        </p>
+        <p>
+          <span class="pill b">Path B</span>
+          <strong>Federation.</strong>
+          Products in OS, reviews in ClickHouse. PPL pushes the
+          aggregation to CH as a single JDBC query
+          (<code>GROUP BY + ORDER BY + LIMIT</code>).
+        </p>
+        <p>
+          <span class="pill c">Path C</span>
+          <strong>+ IN-list pushdown.</strong>
+          The planner drains the bounded left key set and binds it
+          into <code>WHERE parent_asin IN (…)</code> on the CH query
+          at runtime. CH's primary-key index skips &gt;99 % of the
+          fact table.
+        </p>
+      </div>
+      <p style="margin-top: 0.8em; font-size: 0.8em; color: var(--muted);">
+        <strong>The customer-facing PPL query is identical in all three.</strong>
+        The planner picks the backend and the optimization.
+      </p>
+      <aside class="notes">
+        30 seconds. Emphasize: no new syntax, no new datasource call
+        from the customer. They write PPL the same way. The planner
+        decides whether to run aggregation locally or ship it.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 5: RESULTS TABLE ============ -->
+    <section>
+      <div class="kicker">Results</div>
+      <h2>All measured on 67 M row fact table</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th class="num"><span class="pill a">Path A</span></th>
+            <th class="num"><span class="pill b">Path B</span></th>
+            <th class="num"><span class="pill c">Path C</span></th>
+            <th class="num">A → C</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Reviews ingest (67 M)</td>
+            <td class="num">2h 50m</td>
+            <td class="num"><strong>4m 20s</strong></td>
+            <td class="num">4m 20s</td>
+            <td class="num"><strong>~40×</strong></td>
+          </tr>
+          <tr>
+            <td>Reviews storage</td>
+            <td class="num">19.3 GB</td>
+            <td class="num"><strong>7.24 GB</strong></td>
+            <td class="num">7.24 GB</td>
+            <td class="num">2.7×&nbsp;smaller</td>
+          </tr>
+          <tr>
+            <td>End-to-end latency (warm)</td>
+            <td class="num">30 s</td>
+            <td class="num">~600 ms</td>
+            <td class="num"><strong>~170 ms</strong></td>
+            <td class="num"><strong>~176×</strong></td>
+          </tr>
+          <tr>
+            <td>ClickHouse engine-only</td>
+            <td class="num">—</td>
+            <td class="num">465 ms</td>
+            <td class="num"><strong>6–7 ms</strong></td>
+            <td class="num">~71× (B→C)</td>
+          </tr>
+          <tr>
+            <td>Rows scanned at CH</td>
+            <td class="num">—</td>
+            <td class="num">67 M</td>
+            <td class="num"><strong>360 K</strong></td>
+            <td class="num">187× less</td>
+          </tr>
+          <tr>
+            <td>Bytes read at CH</td>
+            <td class="num">—</td>
+            <td class="num">1.94 GB</td>
+            <td class="num"><strong>8.48 MB</strong></td>
+            <td class="num">233× less</td>
+          </tr>
+          <tr>
+            <td>Correctness (simple join rows)</td>
+            <td class="num"><strong>2 (96 % loss)</strong></td>
+            <td class="num">1197</td>
+            <td class="num">1197 ✓</td>
+            <td class="num">—</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top: 0.4em; font-size: 0.75em; color: var(--muted);">
+        Benchmark query: search 50 cookware products (BM25), join reviews filtered to 2022+,
+        aggregate avg rating and count per product. Full PPL on slide 7.
+      </p>
+      <aside class="notes">
+        60 seconds. Walk through three key rows: latency (30s → 170ms),
+        CH engine-only (showing the architectural gap), rows scanned
+        (showing IN-list pushdown's actual effect). Correctness row is
+        the mic drop.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 6: LAYERED SPEEDUP ============ -->
+    <section>
+      <div class="kicker">Where the speedup comes from</div>
+      <h2>Three layers stack cleanly</h2>
+      <div class="three-layer" style="margin-top: 1em;">
+        <div><span class="pill a">A</span></div>
+        <div>
+          <strong>Engine selection.</strong>
+          Columnar storage + hash aggregation replaces
+          paginated inverted-index aggregation.
+          OS does 378 pagination round-trips;
+          CH does one shot.
+        </div>
+        <div class="from">30 s&nbsp;→&nbsp;600 ms</div>
+
+        <div><span class="pill b">B</span></div>
+        <div>
+          <strong>IN-list pushdown.</strong>
+          Planner drains 50 bounded keys from the left side and ships them
+          as <code>WHERE parent_asin IN (…)</code>. CH's MergeTree primary-key
+          index skips &gt;99 % of partitions.
+        </div>
+        <div class="from">600 ms&nbsp;→&nbsp;170 ms</div>
+
+        <div><span class="pill c">C</span></div>
+        <div>
+          <strong>Correctness, everywhere below A.</strong>
+          Path A's 50 K-row subsearch cap silently drops 96 % of
+          grouped results. Paths B and C don't.
+        </div>
+        <div class="from" style="color: #166534;">✓</div>
+      </div>
+      <p style="margin-top: 1.2em; text-align: center; font-size: 1em;">
+        Customer-facing PPL: <strong>unchanged</strong>.
+        Rule framework is <strong>JDBC-dialect-agnostic</strong>
+        (Iceberg, Snowflake, others plug in next).
+      </p>
+      <aside class="notes">
+        45 seconds. Emphasize "stack cleanly" — each optimization is
+        independent, doesn't fight the others. Also emphasize
+        dialect-agnostic: this demo ships ClickHouse, but the same
+        rules apply to any JDBC fact store.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 7: ARCHITECTURE + QUERY ============ -->
+    <section>
+      <div class="kicker">How it works</div>
+      <h2>One planner, two storages, one PPL</h2>
+      <div class="two-col" style="grid-template-columns: 1fr 1.2fr;">
+        <div class="ascii-art">  Customer
+    (PPL · Dashboards · BM25)
+        │
+        ▼
+  ┌── OpenSearch ──┐
+  │                 │
+  │  PPL Parser    │
+  │   → Calcite    │
+  │   → Executor   │
+  │                 │
+  │  ┌──────────┐  │
+  │  │products  │  │
+  │  │ (OS)     │  │
+  │  └──────────┘  │
+  │  ┌──────────┐  │
+  │  │JdbcRel   │  │
+  │  │ (CH)     │──┼──→ JDBC
+  │  │+IN-list  │  │   VPC-private
+  │  └──────────┘  │
+  └─────────────────┘
+                    │
+                    ▼
+        ┌── ClickHouse ──┐
+        │                 │
+        │  MergeTree      │
+        │  pk: (parent_   │
+        │    asin, ts)    │
+        │                 │
+        │  scans 360 K    │
+        │  rows (not 67M) │
+        └─────────────────┘</div>
+        <div>
+          <p style="font-size: 0.8em; margin-bottom: 0.4em;">
+            <strong>The benchmark query (PPL)</strong>
+          </p>
+          <pre><code class="language-sql" style="font-size: 0.75em;">source=products
+| where match(title, 'stainless steel cookware')
+| sort -_score | head 50
+| inner join left=p right=r
+    on p.parent_asin = r.parent_asin
+  [ source=ch.fed.reviews
+    | where timestamp > 1640995200000
+    | fields parent_asin, rating ]
+| stats avg(rating) as avg_r,
+        count() as n by parent_asin</code></pre>
+          <p style="font-size: 0.7em; color: var(--muted); margin-top: 0.6em;">
+            Calcite rewrites the right-side subtree into a single JDBC
+            query; <code>SideInputInListRule</code> inserts a
+            <code>JdbcFilter</code> with <code>ARRAY_IN($0, ?0)</code>;
+            the runtime binder drains the left enumerable's 50
+            distinct <code>parent_asin</code>s and binds them as the
+            <code>?0</code> array parameter.
+          </p>
+        </div>
+      </div>
+      <aside class="notes">
+        30 seconds. Don't read the PPL out loud. Point at the
+        inner-join subsearch syntax and say "reviews are declared as
+        `ch.fed.reviews` — that prefix is all the customer writes to
+        say 'this table lives in ClickHouse'."
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 8: BUSINESS & ASK ============ -->
+    <section>
+      <div class="kicker">Business implications &amp; the ask</div>
+      <h2>What this means, and what I need</h2>
+      <table style="font-size: 0.75em;">
+        <tr>
+          <td style="font-weight: 600; width: 32%;">Do customers leave OS?</td>
+          <td>
+            <strong>No.</strong> OS stays the query entry point, auth surface,
+            dashboards, observability integration. Fact tables just live
+            where they belong.
+          </td>
+        </tr>
+        <tr>
+          <td style="font-weight: 600;">Lock-in to ClickHouse?</td>
+          <td>
+            No. <code>PplFederationDialect</code> is an extension point —
+            Iceberg, Snowflake, other JDBC targets declare capabilities
+            and plug in.
+          </td>
+        </tr>
+        <tr>
+          <td style="font-weight: 600;">Readiness?</td>
+          <td>
+            Code complete on <code>feat/ppl-federation</code>. Benchmarked
+            end-to-end on Amazon Reviews 2023 (67 M rows). Reproduction
+            scripts in repo.
+          </td>
+        </tr>
+      </table>
+      <h3 style="margin-top: 1.2em;">The ask</h3>
+      <ul class="tight-list" style="font-size: 0.85em;">
+        <li>Greenlight to propose at the <strong>next design review</strong>.</li>
+        <li>
+          One <strong>customer design partner</strong> — PPL user with &gt;50 M
+          fact rows they'd rather not keep in OS. Retail and observability both fit.
+        </li>
+        <li>
+          Agreement that <strong>ClickHouse is the reference first datasource</strong> —
+          additional JDBC targets plug into the same rule framework incrementally.
+        </li>
+      </ul>
+      <footer class="footnote">
+        Repro: <code>docs/dev/demo/path-a/</code> &nbsp;·&nbsp;
+        <code>docs/dev/demo/path-bc/</code>
+      </footer>
+      <aside class="notes">
+        30 seconds. Close fast: three concrete asks, no meandering.
+        The design review ask is the real one — the other two follow
+        naturally once there's a greenlight.
+      </aside>
+    </section>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/notes/notes.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    controls: true,
+    progress: true,
+    transition: 'slide',
+    center: false,
+    width: 1280,
+    height: 760,
+    margin: 0.06,
+    plugins: [ RevealHighlight, RevealNotes ]
+  });
+</script>
+
+</body>
+</html>

@@ -1,16 +1,47 @@
 # PPL federation demo deck
 
 4-minute leadership pitch for the PPL federation feature on
-`feat/ppl-federation`.
+`feat/ppl-federation`. Two deliverables:
+
+1. **`slides.html`** — self-contained reveal.js slide deck for the
+   4-minute presentation. Open in any browser, drive with arrow keys.
+   Speaker notes embedded in each slide (press `S` to open notes view).
+   This is the primary artifact.
+2. **`ppl-federation-demo.md`** — long-form markdown brief with the
+   full benchmark table. Use for pre-read circulation before the
+   pitch or as a leave-behind after.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `ppl-federation-demo.md` | Source. Markdown with pandoc YAML frontmatter. |
-| `Makefile` | Build PDF or HTML via pandoc. |
+| `slides.html` | Slide deck (reveal.js) — demo this. |
+| `ppl-federation-demo.md` | Long-form brief (markdown, pandoc). |
+| `architecture.txt` | Standalone ASCII diagram. |
+| `Makefile` | Build PDF exports (both slides and brief). |
 | `README.md` | This file. |
-| `architecture.txt` | Standalone ASCII diagram (also embedded inline in the md). |
+
+## Build the slide PDF
+
+```bash
+make slides-pdf       # Chrome headless → slides.pdf
+make preview-slides   # Open the PDF
+
+# Or just open the HTML in a browser for live presentation:
+make slides
+```
+
+Prerequisite: Google Chrome or Chromium. Install:
+- macOS: `brew install --cask google-chrome`
+- Amazon Linux 2023: `sudo dnf install -y chromium`
+
+## Build the brief PDF (optional)
+
+```bash
+make brief            # pandoc + xelatex → ppl-federation-demo.pdf
+make brief-html       # pandoc → standalone HTML
+make pdf-via-html     # pandoc + wkhtmltopdf (no LaTeX)
+```
 
 ## Numbers (all measured end-to-end on 2026-04-28)
 
