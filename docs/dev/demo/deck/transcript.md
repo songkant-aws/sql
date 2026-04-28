@@ -1,255 +1,220 @@
-# PPL Federation — 4-minute pitch transcript
+# PPL Federation - 4-minute demo transcript
 
-Target: 4:00 spoken + 30 s buffer for transitions and questions.
-Pacing: ~160 words per minute on the main flow, slower on the two
-number-heavy slides.
+Target: about 4:00 spoken, with a small buffer for slide changes.
+Pacing: keep the results slide slow; move quickly through RAG and
+architecture unless the room asks for details.
 
-Each section marks **[on slide]** with the slide title in `slides.html`,
-followed by the words to say. Stage directions in *italic*.
-
----
-
-## [on slide 1 — Title] — 15 s
-
-*Walk up, let the title sit on screen for a beat.*
-
-"PPL Federation. The short version: **same entry point, right engine
-for each workload.** Four minutes."
+Each section marks **[on slide]** with the title in `slides.html`,
+followed by the words to say. Stage directions are in *italic*.
 
 ---
 
-## [on slide 2 — The opportunity] — 30 s
+## [on slide 1 - Title] - 10 s
 
-"OpenSearch excels at search, relevance, observability. That's why
-customers stay on it.
+*Let the title sit for a beat.*
 
-But as their workload expands to **fact-table analytics** —
-reviews, clickstream, orders, long-term spans — they need the right
-engine for *that* work too.
-
-Today, the only paths are to **duplicate the fact data into OS**, or
-to **stitch results together in application code**. Either way, the
-customer is paying an **ETL tax that scales with their data**."
+"PPL Federation. The idea is simple: keep OpenSearch as the entry
+point, and use the right engine for each workload."
 
 ---
 
-## [on slide 3 — What customers work around today] — 40 s
+## [on slide 2 - The opportunity] - 25 s
 
-"Here's what that tax looks like in a real workload.
+"OpenSearch is already where customers come for search, relevance,
+Dashboards, and observability. That part is working.
 
-**We measured this on Amazon Reviews 2023** — a public UCSD dataset.
-We loaded 3.7 million products and 67 million reviews, then compared
-the three execution paths end-to-end, warm-run medians. Reproduction
-scripts are in the repo.
+The gap appears when the same workflow needs fact-table analytics:
+reviews, clickstream, orders, long-term spans. Today customers either
+duplicate that data into OpenSearch, or stitch the answer together in
+application code.
 
-*Point at table rows.*
-
-Teams wait nearly three hours per duplication cycle. Storage grows
-2.7× because inverted index inflates against raw documents. Dashboard
-iteration is 30 seconds per cycle, because OS has to walk 3.78 million
-groups for one top-K query.
-
-*→ Transition:* **Three visible costs. Manageable. But there's a fourth that teams don't see coming.**"
+Both choices create an ETL tax that grows with the data."
 
 ---
 
-## [on slide 4 — Single-engine paths hit a wall] — 30 s
+## [on slide 3 - What customers work around today] - 25 s
 
-*Let the numbers land. Slow tempo.*
+"Here is that tax in a concrete workload: Amazon Reviews 2023, with
+3.7 million products and 67 million reviews.
 
-"PPL's join subsearch bounds output to 50 000 rows. That's
-correct-by-design — it's what stops the engine from running out of
-memory on an unbounded join.
+Keeping everything in OpenSearch means almost three hours per review
+duplication cycle, 19 gigabytes instead of about 7, and about 30
+seconds for a dashboard-style group-by.
 
-At fact-table scale — millions of distinct keys — **that protection
-becomes a ceiling**. Two rows come back where around fifty would
-answer the business question.
-
-The fix isn't a larger cap. It's a different engine for the fact
-side."
+Those are the visible costs. One architectural limit shows up only at
+scale."
 
 ---
 
-## [on slide 5 — Three paths] — 25 s
+## [on slide 4 - Single-engine paths hit a wall] - 25 s
 
-"Three paths. **Same PPL query in all three.**
+*Slow down slightly.*
 
-- **Path A:** everything in OS. Today's default.
-- **Path B:** products in OS, reviews in ClickHouse. PPL pushes the
-  analytical work to CH as a single JDBC query.
-- **Path C:** same as B, plus a planner rule that binds the
-  search-side keys into a `WHERE IN` filter on the CH query at runtime.
+"PPL's subsearch cap is correct by design. It prevents an unbounded
+join from exhausting memory.
 
-The customer writes PPL the same way either way. The planner picks
-the backend."
+But at fact-table scale, that safety boundary becomes a ceiling. In
+this workload, the single-engine path returns 2 rows where 14 are
+actually correct.
 
----
-
-## [on slide 6 — Results] — 60 s
-
-*Pause on the results table. This is the core.*
-
-"**Same dataset, same machines, three execution paths.** Everything
-end-to-end on the 67-million-row fact table.
-
-Each path uses each engine where it excels: Path A asks one engine to
-do two jobs; B and C let each engine do what it's built for.
-
-*Walk through the rows.*
-
-**Ingest:** two hours fifty down to four minutes twenty — forty times.
-
-**Storage:** nineteen gigabytes in OS down to seven in ClickHouse —
-columnar compression at work.
-
-**Latency:** thirty seconds down to one-seventy milliseconds. One
-hundred seventy-six times end-to-end. The ClickHouse engine itself
-does the aggregation in six milliseconds — it scans three-hundred-sixty
-thousand rows instead of sixty-seven million.
-
-**And**: Path A returned two rows where fifty were expected. Paths B
-and C return the complete eleven-hundred-ninety-seven.
-
-*→ Transition:* **176× doesn't happen by accident. Here's how it decomposes.**"
+So the fix is not simply a bigger cap. The fix is to stop asking one
+engine to do two very different jobs."
 
 ---
 
-## [on slide 7 — Three layers stack cleanly] — 45 s
+## [on slide 5 - Three execution paths] - 25 s
 
-"Three independent speedups stack cleanly on top of each other.
+"That gives us three paths, with the same customer-facing PPL query.
 
-**Engine selection** — A to B. Columnar storage and hash aggregation
-replace paginated inverted-index walks.
+Path A is today's default: products and reviews both in OpenSearch.
 
-**IN-list pushdown** — B to C. The planner drains the bounded left
-side's fifty keys and ships them as `WHERE IN` to ClickHouse.
-MergeTree's primary-key index skips more than ninety-nine percent of
-partitions.
+Path B keeps products in OpenSearch and reviews in ClickHouse. PPL
+pushes the analytical subtree to ClickHouse as one JDBC query.
 
-**Join semantics** — everywhere below A. The 50-K cap disappears
-because the work is no longer constrained by a single-engine safety
-default.
+Path C adds the planner optimization: take the bounded search result
+from OpenSearch and bind those keys into a ClickHouse `WHERE IN`
+filter.
 
-The customer-facing PPL is unchanged. And the rule framework is
-**JDBC-dialect agnostic** — Iceberg, Snowflake, other targets plug in
-next."
+The customer does not learn a new language. The planner chooses the
+backend."
 
 ---
 
-## [on slide 8 — RAG] — 25 s
+## [on slide 6 - Results] - 45 s
 
-"Same machinery, new market.
+*Pause on the table. This is the core slide.*
 
-*Point at the PPL code.*
+"Same dataset, same query shape, measured end to end on the
+67-million-row fact table.
 
-Swap `match` for `knn`, and the same federation carries the canonical
-**retrieval-augmented analytics** pattern. OS does k-NN top-K.
-ClickHouse does the fact enrichment.
+The headline is not only speed. It is that each system does the part it
+is good at.
 
-OpenSearch is the only engine with **k-NN, BM25, and external-fact
-federation all GA**. ClickHouse has no mature relevance scoring.
-Vector DBs have no business-data federation.
+Ingest drops from 2 hours 50 minutes to 4 minutes 20 seconds. Storage
+drops from 19.3 gigabytes to 7.24.
 
-This is OpenSearch's lane."
+Latency drops from 30 seconds to about 195 milliseconds, around 154x
+end to end.
 
----
+ClickHouse shows why: with IN-list pushdown, it scans 360 thousand
+rows instead of 67 million, and the engine work is 7 to 8 milliseconds.
 
-## [on slide 9 — Architecture + PPL code] — 25 s
-
-"The whole customer delta is **one prefix**.
-
-*Point at the yellow highlight.*
-
-`match(title, ...)` — BM25 search. OS's native strength.
-
-*Point at the blue highlight.*
-
-`source=ch.fed.reviews` — the whole federation delta. Customer
-declares the source; the planner does the rest.
-
-One PPL query. Two storages. One entry point."
+Most importantly, Path A loses most of the grouped result. Paths B and
+C return the correct 14."
 
 ---
 
-## [on slide 10 — Summary & next steps] — 25 s
+## [on slide 7 - Three layers stack cleanly] - 25 s
+
+"The speedup comes from three layers.
+
+First, engine selection: columnar storage and hash aggregation replace
+paginated inverted-index aggregation.
+
+Second, IN-list pushdown: the planner ships the 50 bounded search keys
+to ClickHouse, so the primary-key index skips almost all of the fact
+table.
+
+Third, correctness: the fact-side work is no longer boxed in by the
+single-engine subsearch cap.
+
+And the PPL stays unchanged."
+
+---
+
+## [on slide 8 - RAG] - 20 s
+
+"The same pattern matters beyond retail.
+
+For RAG, swap BM25 for k-NN. OpenSearch retrieves the top documents;
+the external fact store enriches them with interactions or business
+metrics.
+
+That gives one query entry point: relevance in OpenSearch, facts in
+the system built for facts."
+
+---
+
+## [on slide 9 - Architecture + PPL code] - 20 s
+
+*Point at the highlighted query lines.*
+
+"Mechanically, the customer-visible delta is tiny.
+
+`match(title, ...)` is BM25 search in OpenSearch.
+
+`source=ch.fed.reviews` is the federation part: one prefix naming the
+external source.
+
+Calcite builds the plan, pushes the JDBC subtree down, and ClickHouse
+scans the relevant fact rows instead of the whole table."
+
+---
+
+## [on slide 10 - Summary & next steps] - 20 s
 
 *Close calmly.*
 
-"**OS's strengths stay strengths.** PPL, BM25, k-NN, Dashboards,
-observability integration — all unchanged. The search entry point
-also becomes the federation entry point.
+"So the message is: OpenSearch's strengths stay strengths. PPL,
+Dashboards, BM25, k-NN, auth and observability integration all remain
+the entry point.
 
-Code is complete on the feat branch. Benchmarked end-to-end.
+Federation lets fact tables live where they belong.
 
-If we take this forward, two natural next steps: **engage a design
-partner** — retail or observability — and start with ClickHouse as
-the reference first datasource; additional JDBC targets plug in
-incrementally.
+The branch is code complete and benchmarked. The next step is a retail
+or observability design partner, with ClickHouse as the first reference
+datasource.
 
 Happy to take questions."
 
-*Stop talking. Don't fill silence.*
+*Stop talking. Do not fill the silence.*
 
 ---
 
-## [if asked a technical question — flip to appendix] — variable
+## [if asked a technical question - appendix] - variable
 
-"Here's the physical plan the planner builds for Path C.
+"Here is the physical plan for Path C.
 
-*Point bottom-up.*
+At the bottom is the JDBC table scan. Above it is a filter with
+`ARRAY_IN($0, ?0)`. That parameter is the runtime key array collected
+from the OpenSearch side.
 
-At the bottom, the JDBC table scan.
-
-Above it, a filter containing `ARRAY_IN($0, ?0)` — that's the IN-list
-the rule inserted. The `?0` is a runtime array parameter; the binder
-fills it with the fifty keys drained from the OS side.
-
-Above that, the rest of the JDBC subtree — sort, project, converter —
-all translated into one SQL query and shipped to ClickHouse.
-
-Three regions. Color-coded for whoever's reading this later."
+The rest of the JDBC subtree is still pushed as one SQL query, so the
+optimization does not introduce a second customer-visible query."
 
 ---
 
 ## Pacing check
 
 | Section | Length | Running total |
-|---|---|---|
-| 1. Title | 15 s | 0:15 |
-| 2. Opportunity | 30 s | 0:45 |
-| 3. Today's tax (with methodology) | 40 s | 1:25 |
-| 4. Single-engine wall | 30 s | 1:55 |
-| 5. Three paths | 25 s | 2:20 |
-| 6. Results (with provenance one-liner) | 60 s | 3:20 |
-| 7. Speedup layers | 45 s | 4:05 |
-| 8. RAG | 25 s | 4:30 |
-| 9. Architecture | 25 s | 4:55 |
-| 10. Close | 25 s | 5:20 |
-
-Tight for a hard 4-minute slot. Cut candidates if the room is strict:
-
-- **Drop slide 8 (RAG)** if the audience is retail- or
-  observability-only. Saves 25 s, keeps the mainline story intact.
-- **Shorten slide 7 to 30 s** by skipping the "three layers" framing
-  and jumping directly from "A to B columnar engine" to "B to C
-  IN-list pushdown". Saves 15 s.
-- **Cut slide 9 (architecture)** if the results table and RAG
-  examples already made the mechanism clear. Saves 25 s.
-
-The most compressible 4:00 version is: 1, 2, 3, 4, 5, 6, 7 (trimmed),
-10. That's **3:35** — lets you open to questions with a visible
-buffer.
+|---|---:|---:|
+| 1. Title | 10 s | 0:10 |
+| 2. Opportunity | 25 s | 0:35 |
+| 3. Today's tax | 25 s | 1:00 |
+| 4. Single-engine wall | 25 s | 1:25 |
+| 5. Three paths | 25 s | 1:50 |
+| 6. Results | 45 s | 2:35 |
+| 7. Speedup layers | 25 s | 3:00 |
+| 8. RAG | 20 s | 3:20 |
+| 9. Architecture | 20 s | 3:40 |
+| 10. Close | 20 s | 4:00 |
 
 ## Delivery notes
 
-- **Slide 4 (Silent-style, calm variant):** this is the hook. Don't
-  rush it. Let "two of fifty" sit on screen for a beat before the
-  "fix isn't a larger cap" line.
-- **Slide 6 (Results):** the table is dense. Say the three headline
-  numbers (40x, 176x, 6 ms) slowly and clearly; let the rest of the
-  table speak visually.
-- **Slide 10 (Close):** end on "Happy to take questions" and stop.
-  The summary slide already carries the next-steps list visually;
-  don't re-read it.
-- **Appendix:** only open if asked. Opening it unprompted signals
-  "I prepared too much" and erodes the close.
+- **Main story:** search entry point stays in OS; fact-scale analytics
+  moves to the engine built for it.
+- **Slide 4:** keep the tone calm. The cap is a safety boundary, not a
+  bug. The point is that workload routing is the cleaner answer.
+- **Slide 6:** say only the headline rows: ingest, storage, latency,
+  rows scanned, correctness. Let the rest of the table support you.
+- **Slide 8 and 9:** these are proof that the idea generalizes and is
+  simple to use. Do not over-explain them in the main 4-minute run.
+- **Appendix:** open only if asked about the planner mechanics.
+
+## Optional cuts for a strict room
+
+- Skip slide 8's second sentence and say only: "The same federation
+  pattern also covers RAG: OpenSearch retrieves, the fact store
+  enriches." Saves about 10 seconds.
+- On slide 6, if time is tight, skip the storage row and go directly
+  from ingest to latency. Saves about 8 seconds.
