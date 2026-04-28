@@ -100,7 +100,12 @@ cat > /mnt/ebs/ch-config.d/users.xml <<'EOF'
     <default>
       <password>demopass</password>
       <networks>
-        <!-- Accept from VPC (SG enforces which source). -->
+        <!-- Accept from VPC on both stacks. ::/0 alone does NOT cover
+             IPv4 in CH 24.x, so requests from a Machine A in 172.31.x/
+             10.x land with AUTHENTICATION_FAILED instead of the
+             expected success. The SG still controls which source IPs
+             can actually reach port 8123. -->
+        <ip>0.0.0.0/0</ip>
         <ip>::/0</ip>
       </networks>
       <profile>default</profile>
