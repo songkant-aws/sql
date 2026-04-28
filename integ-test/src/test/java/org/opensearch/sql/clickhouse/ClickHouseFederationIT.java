@@ -622,6 +622,97 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   }
 
   // ---------------------------------------------------------------------------
+  // JDBC-on-left scenario: when the right sub-search carries a stats/aggregate that makes
+  // Calcite's cost model place the aggregated JDBC output on the join's left (build) child
+  // via JoinCommuteRule / cost-based input reordering, SideInputInListRule must still fire
+  // and bind real keys. Prior to the bidirectional fix, the rule hardcoded
+  // `join.getRight() instanceof JdbcToEnumerableConverter` and silently no-op'd whenever
+  // Volcano commuted JDBC to the left — breaking the production query shape in
+  // docs/dev/bug-in-list-pushdown-null-binding.md without any visible signal.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void testInListPushdownFiresWhenJdbcIsOnCalciteLeft() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      truncateChQueryLog(c);
+    }
+
+    // This shape — OS bounded-left + CH right sub-search with stats/agg by the join key —
+    // consistently triggers Calcite's JoinCommuteRule to place the aggregated CH output on
+    // the physical join's *left* child (build side), because the aggregated output has a
+    // small estimated row count. The rule must detect JDBC on either child, not just right.
+    String ppl =
+        "source="
+            + OS_INDEX
+            + " | head 10"
+            + " | inner join left=d right=f on d.user_id = f.user_id"
+            + " [ source="
+            + DS_NAME
+            + "."
+            + CH_DATABASE
+            + "."
+            + CH_TABLE
+            + " | stats sum(v) as s by user_id ]";
+    JSONObject j = executeQuery(ppl);
+
+    // (1) Correctness: must include user_ids 1, 3, 5. Prior to the bidirectional fix this
+    // either produced an empty result (no pushdown + CH-side filter that happened to match
+    // zero) or a wrong result (stale filter); post-fix, the IN-list pushdown works regardless
+    // of which side Calcite picks for JDBC.
+    JSONArray rows = j.getJSONArray("datarows");
+    assertThat(
+        "bounded-left + agg'd-right join must emit at least one row per seeded user (3)",
+        rows.length(),
+        greaterThanOrEqualTo(3));
+    int userIdCol = findUserIdColumn(j);
+    Set<Integer> observedUserIds = new HashSet<>();
+    for (int i = 0; i < rows.length(); i++) {
+      observedUserIds.add(rows.getJSONArray(i).getInt(userIdCol));
+    }
+    assertTrue("user_id=1 must be present. Got: " + observedUserIds, observedUserIds.contains(1));
+    assertTrue("user_id=3 must be present. Got: " + observedUserIds, observedUserIds.contains(3));
+    assertTrue("user_id=5 must be present. Got: " + observedUserIds, observedUserIds.contains(5));
+
+    // (2) CH SQL must show IN-list pushdown on user_id — pins that the rule actually fired
+    // rather than silently no-op'ing (as it did before the bidirectional fix).
+    List<String> observed;
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      observed = readChQueryLogForFedEvents(c);
+    }
+    String dump = dumpObservedSql("CH query_log (JDBC-on-left scenario)", observed);
+    String inListSql = findInListSql(observed);
+    assertThat(
+        "IN-list pushdown must target user_id\n" + dump, inListSql, containsString("`user_id`"));
+    assertThat(
+        "IN-list pushdown must bind the real distinct keys {1,3,5}\n" + dump,
+        hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
+        equalTo(true));
+
+    // (3) Pin the commuted-plan shape via explain: JDBC must be on the *left* child of
+    // EnumerableHashJoin. If a future Calcite upgrade changes the cost model and reverses the
+    // commute, this test becomes indistinguishable from testBoundedLeftJoinAggregatedCh (which
+    // covers the JDBC-on-right case) and needs its plan-shape assertion revisited.
+    Request explainReq = new Request("POST", "/_plugins/_ppl/_explain");
+    explainReq.setJsonEntity("{\"query\":\"" + ppl.replace("\"", "\\\"") + "\"}");
+    Response explainResp = client().performRequest(explainReq);
+    String explainBody = EntityUtils.toString(explainResp.getEntity());
+    // The physical plan string contains "EnumerableHashJoin" followed by input-0 on the next
+    // indented line. We want to see JdbcToEnumerableConverter as that first child (= left).
+    int joinIdx = explainBody.indexOf("EnumerableHashJoin");
+    int jdbcIdx = explainBody.indexOf("JdbcToEnumerableConverter", joinIdx);
+    int osIdx = explainBody.indexOf("CalciteEnumerableIndexScan", joinIdx);
+    assertTrue(
+        "Expected EnumerableHashJoin's first child (left) to be JdbcToEnumerableConverter — "
+            + "i.e. Calcite to have commuted JDBC to the left. If this assertion fails the test "
+            + "is not covering what it claims to cover. Explain:\n"
+            + explainBody,
+        joinIdx >= 0 && jdbcIdx >= 0 && osIdx >= 0 && jdbcIdx < osIdx);
+  }
+
+  // ---------------------------------------------------------------------------
   // Empty-left: seed an empty OS index and join it against an aggregated CH side.
   // The runtime drain yields zero keys, which short-circuits the right-side
   // sub-search to an empty IN-list — the final join result must be empty. This
