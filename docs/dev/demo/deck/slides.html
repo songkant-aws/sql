@@ -143,6 +143,75 @@
       transform: translateY(-4%);
     }
 
+    /* "Silent." and "6 ms" big-num slides — center the inner block. */
+    .reveal .silent-slide,
+    .reveal .bignum-slide {
+      display: flex !important;
+      flex-direction: column;
+      justify-content: center;
+      align-items: stretch;
+      height: 100%;
+    }
+    .reveal .silent-inner {
+      width: 100%;
+      text-align: center;
+    }
+    .reveal .silent-inner .kicker {
+      text-align: center;
+    }
+    .reveal .silent-slide h2 {
+      font-size: 2.4em;
+      text-align: center;
+      color: var(--accent);
+      letter-spacing: -0.04em;
+    }
+    .silent-numbers {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 1.2em;
+      margin: 0.6em 0 0.4em;
+    }
+    .silent-num {
+      text-align: center;
+    }
+    .silent-num .big-num {
+      font-size: 3em;
+      line-height: 1;
+    }
+    .silent-num .big-num-label {
+      margin-top: 0.2em;
+    }
+    .silent-vs {
+      font-size: 1.6em;
+      color: var(--muted);
+      font-weight: 300;
+    }
+
+    /* Inline syntax highlighting for PPL code emphasis. */
+    .reveal pre code mark.hl-search {
+      background: #fef3c7;
+      color: #92400e;
+      padding: 0 0.15em;
+      border-radius: 3px;
+    }
+    .reveal pre code mark.hl-fed {
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 0 0.15em;
+      border-radius: 3px;
+    }
+    .reveal mark.hl-search {
+      background: #fef3c7;
+      color: #92400e;
+      border-radius: 3px;
+    }
+    .reveal mark.hl-fed {
+      background: #dbeafe;
+      color: #1e40af;
+      border-radius: 3px;
+    }
+
     .tight-list li { margin: 0.1em 0; }
     .reveal ul { font-size: 0.8em; }
     .reveal pre { margin: 0.3em 0; }
@@ -199,7 +268,7 @@
 
     <!-- ============ SLIDE 3: PATH A FAILURE MODES ============ -->
     <section>
-      <div class="kicker"><span class="pill a">Path A</span> All-in-OpenSearch: four things break</div>
+      <div class="kicker"><span class="pill a">Path A</span> All-in-OpenSearch: three costs</div>
       <h2 style="display: none;">Path A failure modes</h2>
       <p style="font-size: 0.85em; color: var(--muted); margin: 0.2em 0 0.6em;">
         Measured on Amazon Reviews 2023 — 3.7 M products, 67 M reviews.
@@ -231,28 +300,50 @@
             </td>
             <td class="num"><strong>~30 s</strong></td>
           </tr>
-          <tr>
-            <td><strong>Correctness</strong></td>
-            <td>
-              PPL join subsearch has a 50 K-row safety cap.<br>
-              3.78 M distinct keys → <strong>96 % silent data loss</strong>
-            </td>
-            <td class="num"><strong>2 rows returned, ≈50 expected</strong></td>
-          </tr>
         </tbody>
       </table>
-      <p style="margin-top: 0.5em; font-size: 0.8em;">
-        Customer gets <strong>wrong answers in 300 ms, or correct answers in 30 seconds</strong>.
-        Neither works for a real dashboard.
+      <p style="margin-top: 0.6em; font-size: 0.85em; color: var(--accent); font-weight: 500;">
+        And there's a fourth — the one customers don't realize is happening.
       </p>
       <aside class="notes">
-        45 seconds. Spend the most time on the correctness row — this
-        is the one customers don't realize is happening. 96% silent
-        data loss + a 300ms response feels successful to the operator.
+        30 seconds. Three costs: ingest, storage, latency. End with a
+        tease line that leads into the next slide.
       </aside>
     </section>
 
-    <!-- ============ SLIDE 4: THREE PATHS ============ -->
+    <!-- ============ SLIDE 4: SILENT. ============ -->
+    <section class="silent-slide">
+      <div class="silent-inner">
+        <div class="kicker">Correctness</div>
+        <h2 style="margin-bottom: 0.3em;">Silent.</h2>
+        <div class="silent-numbers">
+          <div class="silent-num">
+            <div class="big-num">2</div>
+            <div class="big-num-label">rows returned</div>
+          </div>
+          <div class="silent-vs">vs</div>
+          <div class="silent-num">
+            <div class="big-num" style="color: var(--muted);">~50</div>
+            <div class="big-num-label">expected</div>
+          </div>
+        </div>
+        <p style="font-size: 1.05em; text-align: center; margin-top: 0.8em;">
+          <strong>96 % silent data loss.</strong>
+        </p>
+        <p style="font-size: 0.75em; text-align: center; color: var(--muted); margin-top: 0.6em;">
+          PPL join subsearch cap: 50 K rows. Fact table has 3.78 M distinct keys.<br>
+          Customer sees <em>"success"</em> in 300 ms. Dashboard shows the wrong number.
+        </p>
+      </div>
+      <aside class="notes">
+        30 seconds. Let the big-num land. Pause. The 300ms "success"
+        line is the kicker — customers have no way to know the result
+        is truncated. This is the strongest single-slide moment in
+        the pitch.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 5: THREE PATHS ============ -->
     <section>
       <div class="kicker">The fix</div>
       <h2>Three execution paths. Same PPL query.</h2>
@@ -288,7 +379,7 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 5: RESULTS TABLE ============ -->
+    <!-- ============ SLIDE 6: RESULTS TABLE ============ -->
     <section>
       <div class="kicker">Results</div>
       <h2>All measured on 67 M row fact table</h2>
@@ -366,7 +457,32 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 6: LAYERED SPEEDUP ============ -->
+    <!-- ============ SLIDE 7: 6 MS BIG-NUM ============ -->
+    <section class="bignum-slide">
+      <div class="silent-inner">
+        <div class="kicker">ClickHouse engine-only, 67 M rows aggregated</div>
+        <div class="silent-numbers" style="margin-top: 0.6em;">
+          <div class="silent-num">
+            <div class="big-num" style="font-size: 4em;">6 ms</div>
+          </div>
+        </div>
+        <p style="text-align: center; font-size: 0.9em; margin-top: 1em;">
+          <strong>MergeTree primary-key index</strong> skips &gt;99 % of partitions.
+        </p>
+        <p style="text-align: center; font-size: 0.75em; color: var(--muted); margin-top: 0.4em;">
+          This is what IN-list pushdown buys: 67 M rows → 360 K rows scanned,
+          1.94 GB → 8.48 MB read.<br>
+          The <em>customer-facing PPL query doesn't change</em>.
+        </p>
+      </div>
+      <aside class="notes">
+        20 seconds. Contrast with Path A's ~30 s. CH can do this in 6 ms
+        because the rule lets CH's primary-key index do the skipping.
+        The key story: same PPL, engine-level choice.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 8: LAYERED SPEEDUP ============ -->
     <section>
       <div class="kicker">Where the speedup comes from</div>
       <h2>Three layers stack cleanly</h2>
@@ -411,7 +527,56 @@
       </aside>
     </section>
 
-    <!-- ============ SLIDE 7: ARCHITECTURE + QUERY ============ -->
+    <!-- ============ SLIDE 9: RAG PATTERN ============ -->
+    <section>
+      <div class="kicker">Same pattern, new market</div>
+      <h2>Retrieval-augmented analytics: RAG.</h2>
+      <div class="two-col" style="grid-template-columns: 1.1fr 1fr; gap: 1.2em;">
+        <div>
+          <pre><code class="language-sql" style="font-size: 0.72em;">source=docs
+| where <mark class="hl-search">knn(embedding, [query_vec], k=50)</mark>
+| sort -_score
+| inner join left=d right=e
+    on d.doc_id = e.doc_id
+  [ <mark class="hl-fed">source=ch.fed.user_interactions</mark>
+    | stats sum(engagement) as eng
+        by doc_id ]</code></pre>
+          <p style="font-size: 0.65em; color: var(--muted); margin-top: 0.3em;">
+            Retrieve (OS k-NN) → enrich (CH fact table) → answer.
+            Canonical GenAI pattern for 2024+.
+          </p>
+        </div>
+        <div style="font-size: 0.85em;">
+          <ul class="tight-list">
+            <li style="margin-bottom: 0.6em;">
+              <strong>OS's unique combination.</strong>
+              k-NN <em>plus</em> BM25 <em>plus</em> external-fact federation.
+            </li>
+            <li style="margin-bottom: 0.6em;">
+              <strong>GA today.</strong>
+              OS k-NN has been in production for 3+ years. This branch
+              adds the federation half.
+            </li>
+            <li>
+              <strong>Nobody else can do this.</strong>
+              ClickHouse has no mature relevance scoring. Vector DBs
+              (Pinecone, Weaviate) have no business-data federation.
+            </li>
+          </ul>
+        </div>
+      </div>
+      <aside class="notes">
+        30 seconds. The pattern is identical to the cookware demo —
+        BM25 is just swapped for k-NN. That's the point: same
+        federation machinery serves observability (log + spans),
+        e-commerce (product + orders), and GenAI (vectors + facts).
+
+        If asked: OS k-NN engine (Lucene + FAISS + nmslib backends)
+        has been GA since 2020. This is not a research project.
+      </aside>
+    </section>
+
+    <!-- ============ SLIDE 10: ARCHITECTURE + QUERY ============ -->
     <section>
       <div class="kicker">How it works</div>
       <h2>One planner, two storages, one PPL</h2>
@@ -439,34 +604,36 @@
             <strong>The benchmark query (PPL)</strong>
           </p>
           <pre><code class="language-sql" style="font-size: 0.75em;">source=products
-| where match(title, 'stainless steel cookware')
+| where <mark class="hl-search">match(title, 'stainless steel cookware')</mark>
 | sort -_score | head 50
 | inner join left=p right=r
     on p.parent_asin = r.parent_asin
-  [ source=ch.fed.reviews
+  [ <mark class="hl-fed">source=ch.fed.reviews</mark>
     | where timestamp > 1640995200000
     | fields parent_asin, rating ]
 | stats avg(rating) as avg_r,
         count() as n by parent_asin</code></pre>
-          <p style="font-size: 0.7em; color: var(--muted); margin-top: 0.6em;">
-            Calcite rewrites the right-side subtree into a single JDBC
-            query; <code>SideInputInListRule</code> inserts a
-            <code>JdbcFilter</code> with <code>ARRAY_IN($0, ?0)</code>;
-            the runtime binder drains the left enumerable's 50
-            distinct <code>parent_asin</code>s and binds them as the
-            <code>?0</code> array parameter.
+          <p style="font-size: 0.7em; color: var(--muted); margin-top: 0.4em;">
+            <mark class="hl-search" style="padding: 0 0.3em;">match(title, …)</mark> — BM25 search, OS's native strength.<br>
+            <mark class="hl-fed" style="padding: 0 0.3em;">source=ch.fed.reviews</mark> — the whole federation delta. That prefix is all the customer writes.
           </p>
         </div>
       </div>
       <aside class="notes">
-        30 seconds. Don't read the PPL out loud. Point at the
-        inner-join subsearch syntax and say "reviews are declared as
-        `ch.fed.reviews` — that prefix is all the customer writes to
-        say 'this table lives in ClickHouse'."
+        30 seconds. Point at the two highlighted lines. "BM25 is OS's
+        strength. `ch.fed.reviews` is the whole federation delta —
+        one prefix. The planner does the rest."
+
+        Q: Why not do this in ClickHouse with an opensearch() function?
+        A: Customer's query entry point is OS — dashboards, auth,
+           BM25, k-NN are wired there. Moving federation to CH means
+           rewriting every query and leaving the OS ecosystem. We
+           serve the majority of OS users whose main operation is
+           search. Federation belongs on the search side.
       </aside>
     </section>
 
-    <!-- ============ SLIDE 8: SUMMARY & NEXT STEPS ============ -->
+    <!-- ============ SLIDE 11: SUMMARY & NEXT STEPS ============ -->
     <section class="summary-slide">
       <div class="summary-inner">
         <div class="kicker">Summary</div>

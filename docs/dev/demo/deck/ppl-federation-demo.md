@@ -20,7 +20,7 @@ OS. That one decision quietly breaks three things.
 
 ---
 
-# Three failure modes (Path A, all-in-OS)
+# Three costs of all-in-OS (Path A)
 
 Measured on Amazon Reviews 2023 — **3.7 M products, 67 M reviews**.
 
@@ -28,11 +28,19 @@ Measured on Amazon Reviews 2023 — **3.7 M products, 67 M reviews**.
 |---|---|---:|
 | **Ingest cost** | Bulk-loading reviews into OS vs. a columnar engine. | **2h 50m vs 4m 20s** |
 | **Storage cost** | OS index vs. columnar compression. | **19.3 GB vs 7.24 GB** |
-| **Query latency** | Dashboard query: `group by product, top-K by count`. OS must enumerate all 3.7 M groups. | **~30 s** |
-| **Correctness** | PPL `join` subsearch has a 50 000-row safety cap. 3.7 M distinct keys mean **96 % silent data loss**. | **2 rows returned, ~50 expected** |
+| **Query latency** | Dashboard query: `group by product, top-K by count`. OS must enumerate all 3.78 M groups. | **~30 s** |
 
-Customer gets wrong answers in 300 ms, or correct answers in 30 seconds.
-Neither works for a dashboard.
+---
+
+# Silent.
+
+There's a fourth cost — the one customers don't realize.
+
+**2 rows returned. ~50 expected. 96 % silent data loss.**
+
+PPL's `join` subsearch has a 50 000-row safety cap; the fact table has
+3.78 M distinct join keys. Customer sees "success" in 300 ms. The
+dashboard shows the wrong number. Every time.
 
 ---
 
@@ -93,6 +101,45 @@ The optimization stacks cleanly: Path C is 3.5× faster than Path B and
 
 ---
 
+# 6 ms.
+
+That's what ClickHouse takes to aggregate 67 M rows once
+`SideInputInListRule` has narrowed the scan to 360 K rows via
+`WHERE parent_asin IN (…)`.
+
+- MergeTree primary-key index skips >99 % of partitions
+- 1.94 GB → 8.48 MB read per query (233× less)
+- **Customer-facing PPL doesn't change.** The planner inserts the
+  filter; the runtime binder drains the left side's keys into it.
+
+---
+
+# Same pattern, new market: RAG
+
+The same federation machinery serves the canonical GenAI retrieval
+pattern — k-NN top-K on OpenSearch, enrichment on a columnar fact
+store:
+
+```
+source=docs | where knn(embedding, [query_vec], k=50)
+| sort -_score
+| inner join left=d right=e on d.doc_id = e.doc_id
+  [ source=ch.fed.user_interactions
+    | stats sum(engagement) as eng by doc_id ]
+```
+
+Three things make this OpenSearch's lane:
+
+- **Unique combination.** k-NN + BM25 + external-fact federation.
+  OS is the only engine with all three GA.
+- **GA today.** OS k-NN engine has been in production for 3+ years.
+  This branch adds the federation half.
+- **No one else can do it.** ClickHouse has no mature relevance
+  scoring. Vector DBs (Pinecone, Weaviate) have no business-data
+  federation.
+
+---
+
 # Architecture
 
 ```
@@ -131,13 +178,13 @@ decision.
 
 ---
 
-# What I need
+# Possible next steps
 
-- Greenlight to propose at the next design review.
-- One customer with PPL + 50 M+ fact rows they don't want in OS
-  (retail or observability both fit).
-- Agreement that **ClickHouse is the reference first datasource** — more
-  JDBC targets plug in incrementally on the same rule framework.
+- Find a **customer design partner** — PPL user with > 50 M fact rows
+  they'd rather not keep in OS. Retail and observability both fit.
+- Start with **ClickHouse as the reference first datasource** —
+  additional JDBC targets plug into the same rule framework
+  incrementally.
 
 ---
 
