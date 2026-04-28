@@ -54,6 +54,37 @@
     .reveal section.top-aligned {
       justify-content: flex-start;
     }
+
+    /* Print-PDF mode (reveal.js's print stylesheet wraps each slide in
+       .pdf-page with a fixed height). By default `.reveal section` loses
+       its flex behavior inside the print pages because reveal.js overrides
+       it. Re-apply the flex centering for print so the PDF matches the
+       on-screen layout. */
+    @media print {
+      .reveal .pdf-page > section,
+      .reveal .pdf-page > .pdf-page-content > section,
+      .reveal .slides > section {
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        height: 100% !important;
+        min-height: 100% !important;
+      }
+      .reveal .pdf-page > section.top-aligned,
+      .reveal .pdf-page > .pdf-page-content > section.top-aligned,
+      .reveal .slides > section.top-aligned {
+        justify-content: flex-start !important;
+      }
+      /* Preserve the special-slide behaviors (summary / silent / bignum)
+         which have their own justify-content settings. */
+      .reveal .silent-slide,
+      .reveal .bignum-slide {
+        justify-content: center !important;
+      }
+      .reveal .summary-slide {
+        justify-content: flex-start !important;
+      }
+    }
     .reveal .title-slide { text-align: center; }
     .reveal p { margin: 0.35em 0; }
     .reveal li { margin: 0.1em 0; }
