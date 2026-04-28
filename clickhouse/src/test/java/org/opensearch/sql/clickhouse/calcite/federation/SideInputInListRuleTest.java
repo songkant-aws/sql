@@ -5,11 +5,15 @@
 package org.opensearch.sql.clickhouse.calcite.federation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import org.apache.calcite.adapter.jdbc.JdbcTableScan;
+import org.apache.calcite.plan.RelOptRule;
+import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -67,6 +71,46 @@ class SideInputInListRuleTest {
   @Test
   void ruleInstanceExists() {
     assertNotNull(SideInputInListRule.INSTANCE);
+  }
+
+  // -------------------- isJoinTypeCompatibleWithInListPushdown --------------------
+
+  @Test
+  void joinTypeGuardAcceptsInnerAndLeft() {
+    // INNER and LEFT: right-side rows with no left match never appear in the output, so filtering
+    // right to `key IN (<left keys>)` cannot drop a row that would otherwise contribute.
+    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.INNER));
+    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.LEFT));
+  }
+
+  @Test
+  void joinTypeGuardAcceptsSemiAndAnti() {
+    // SEMI/ANTI: right rows act as existence probes only. Filtering right to `key IN (<left keys>)`
+    // leaves the per-left-key match/no-match answer unchanged because dropped right rows (key not
+    // in left) could never have matched any left row.
+    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.SEMI));
+    assertTrue(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.ANTI));
+  }
+
+  @Test
+  void ruleOperandMatchesGenericJoinNotASpecificPhysicalSubtype() {
+    // Pin the operand class to Join.class so the rule fires on EnumerableHashJoin,
+    // EnumerableMergeJoin, and EnumerableNestedLoopJoin alike. If a future change narrows the
+    // operand to a specific physical subtype (e.g. EnumerableHashJoin.class), plans picked by
+    // Volcano as merge/NL joins will silently bypass the IN-list pushdown — this test catches
+    // that regression at unit-test time without needing a cost-driven IT to produce a merge/NL
+    // plan on demand.
+    RelOptRule rule = SideInputInListRule.INSTANCE;
+    RelOptRuleOperand operand = rule.getOperand();
+    assertEquals(Join.class, operand.getMatchedClass());
+  }
+
+  @Test
+  void joinTypeGuardRejectsRightAndFull() {
+    // RIGHT and FULL surface unmatched right rows. Filtering right to `key IN (<left keys>)` drops
+    // exactly those rows, so the rewrite would silently return incorrect results.
+    assertFalse(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.RIGHT));
+    assertFalse(SideInputInListRule.isJoinTypeCompatibleWithInListPushdown(JoinRelType.FULL));
   }
 
   // -------------------- walkForStaticFetch --------------------

@@ -7,7 +7,6 @@ package org.opensearch.sql.clickhouse.calcite.federation;
 import com.google.common.annotations.VisibleForTesting;
 import java.util.ArrayList;
 import java.util.List;
-import org.apache.calcite.adapter.enumerable.EnumerableHashJoin;
 import org.apache.calcite.adapter.jdbc.JdbcConvention;
 import org.apache.calcite.adapter.jdbc.JdbcTableScan;
 import org.apache.calcite.adapter.jdbc.JdbcToEnumerableConverter;
@@ -18,6 +17,7 @@ import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.Join;
+import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
@@ -36,14 +36,36 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Volcano-phase rule matching {@link EnumerableHashJoin} hinted {@code bounded_left} whose right
- * input is a {@link JdbcToEnumerableConverter}. Rewrites the right JDBC subtree to insert a {@link
+ * Volcano-phase rule matching any {@link Join} with a bounded left side and a right input that is a
+ * {@link JdbcToEnumerableConverter}. Rewrites the right JDBC subtree to insert a {@link
  * JdbcSideInputFilter} above the base {@link JdbcTableScan}, enabling runtime {@code WHERE key IN
  * (?)} binding from the drained left side of the join.
+ *
+ * <p>The operand is {@link Join} (rather than a specific physical subtype) so the rule fires on
+ * {@code EnumerableHashJoin}, {@code EnumerableMergeJoin}, and {@code EnumerableNestedLoopJoin}
+ * alike — all three use the left input as the driving/build side, so draining the left to populate
+ * the right-side IN-list is semantically sound for each.
+ *
+ * <p><b>Join-type guard.</b> Filtering the right to {@code key IN (<left keys>)} is semantically
+ * correct only for join types where right-side rows with no left match are already excluded from
+ * the result:
+ *
+ * <ul>
+ *   <li>{@link JoinRelType#INNER} / {@link JoinRelType#LEFT}: only rows with a right match
+ *       (possibly empty for LEFT) appear; filtering right to {@code IN (left keys)} cannot drop a
+ *       row that would otherwise contribute.
+ *   <li>{@link JoinRelType#SEMI} / {@link JoinRelType#ANTI}: right rows only act as existence
+ *       probes; filtering them to {@code IN (left keys)} preserves the per-left-key EXISTS answer
+ *       because right rows whose key is not in the left set never match any left row.
+ *   <li>{@link JoinRelType#RIGHT} / {@link JoinRelType#FULL}: unmatched right rows must survive in
+ *       the output. Filtering right to {@code IN (left keys)} would drop exactly those unmatched
+ *       rows, producing wrong results. The rule rejects these.
+ * </ul>
  *
  * <p>No-ops if:
  *
  * <ul>
+ *   <li>the join type is {@link JoinRelType#RIGHT} or {@link JoinRelType#FULL} (see above),
  *   <li>the join is not statically-provably bounded on its left side (neither a {@code
  *       bounded_left} hint nor {@link RelMetadataQuery#getMaxRowCount} yields an upper bound
  *       &le; {@link #METADATA_BOUND_CEILING}),
@@ -84,10 +106,18 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
   public void onMatch(RelOptRuleCall call) {
     Join join = call.rel(0);
 
+    // 0. join-type guard: only fire on join types where pruning right-side rows whose key is not
+    //    in the left-key set preserves the result. See class javadoc for the full derivation. In
+    //    particular RIGHT/FULL outer joins surface right rows with no left match, and filtering
+    //    those out would silently drop correct rows.
+    if (!isJoinTypeCompatibleWithInListPushdown(join.getJoinType())) {
+      return;
+    }
+
     // 1. boundedness: prefer the bounded_left hint (set in HEP by BoundedJoinHintRule), but fall
     //    back to structural row-count metadata. Calcite's EnumerableJoinRule.convert path does not
-    //    propagate hints onto the new EnumerableHashJoin, so by the time this Volcano rule fires
-    //    the hint is typically gone. The metadata fallback recovers structural proofs like a
+    //    propagate hints onto the physical join node, so by the time this Volcano rule fires the
+    //    hint is typically gone. The metadata fallback recovers structural proofs like a
     //    Sort(fetch) on the left subtree (exactly what `| head N` produces) so we still fire on
     //    bounded-left joins even when the hint has been stripped.
     long boundedSize = determineBoundedSize(join);
@@ -192,6 +222,27 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     call.transformTo(newJoin);
   }
 
+  /**
+   * Returns {@code true} if filtering the right input to {@code key IN (<left keys>)} preserves
+   * join semantics for {@code type}. See class javadoc for the per-type derivation. Kept as a
+   * separate helper (rather than inlined in {@link #onMatch}) so unit tests can pin the
+   * per-join-type decision without exercising the full rule machinery.
+   */
+  @VisibleForTesting
+  static boolean isJoinTypeCompatibleWithInListPushdown(JoinRelType type) {
+    switch (type) {
+      case INNER:
+      case LEFT:
+      case SEMI:
+      case ANTI:
+        return true;
+      case RIGHT:
+      case FULL:
+      default:
+        return false;
+    }
+  }
+
   private static RelHint findBoundedLeftHint(Join join) {
     for (RelHint h : join.getHints()) {
       if (BoundedJoinHintRule.HINT_NAME.equals(h.hintName)) {
@@ -205,10 +256,9 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
    * Returns a statically-provable upper bound for the left-side row count, or {@code -1} if none
    * can be determined. Prefers the {@code bounded_left} hint when present; otherwise consults
    * {@link RelMetadataQuery#getMaxRowCount(RelNode)}. The metadata path handles the common case
-   * where Volcano's {@code EnumerableJoinRule.convert} constructs a fresh {@link
-   * EnumerableHashJoin} without copying hints — in that case Calcite's native {@code
-   * RelMdMaxRowCount} still returns the {@code Sort.fetch} value (which is what {@code | head N}
-   * produces upstream).
+   * where Volcano's {@code EnumerableJoinRule.convert} constructs a fresh physical join without
+   * copying hints — in that case Calcite's native {@code RelMdMaxRowCount} still returns the
+   * {@code Sort.fetch} value (which is what {@code | head N} produces upstream).
    */
   @VisibleForTesting
   static long determineBoundedSize(Join join) {
@@ -432,7 +482,12 @@ public final class SideInputInListRule extends RelRule<SideInputInListRule.Confi
     Config DEFAULT =
         ImmutableSideInputInListRule.Config.builder()
             .build()
-            .withOperandSupplier(b -> b.operand(EnumerableHashJoin.class).anyInputs())
+            // Operand is the generic Join base class (not a specific physical subtype) so the
+            // rule fires on EnumerableHashJoin, EnumerableMergeJoin, and EnumerableNestedLoopJoin.
+            // Semantic filtering by join type happens inside onMatch via
+            // isJoinTypeCompatibleWithInListPushdown; operand-level restriction would incorrectly
+            // exclude merge/NL plans where the rewrite is safe.
+            .withOperandSupplier(b -> b.operand(Join.class).anyInputs())
             .withDescription("SideInputInListRule")
             .as(Config.class);
 
