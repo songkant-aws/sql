@@ -26,7 +26,9 @@ OS_URL="${OS_URL:-http://127.0.0.1:9200}"
 DS_NAME="${DS_NAME:-ch}"
 CH_DATABASE="${CH_DATABASE:-fed}"
 CH_USER="${CH_USER:-default}"
-CH_PASSWORD="${CH_PASSWORD:-}"
+# Default password matches machine-b-bootstrap.sh's users.xml. Override
+# via CH_PASSWORD env var if you changed it.
+CH_PASSWORD="${CH_PASSWORD:-demopass}"
 CH_URL="http://$CH_PRIVATE_IP:8123"
 
 log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }

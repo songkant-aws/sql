@@ -78,9 +78,15 @@ cat > /mnt/ebs/ch-config.d/query-log.xml <<'EOF'
 </clickhouse>
 EOF
 
-# User config: default user, no password (demo only — access is SG-gated).
-# If you need auth later, set CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 and
-# create users via SQL.
+# User config for the federation demo. The `default` user gets a
+# non-empty password because the OpenSearch SQL plugin's CLICKHOUSE
+# connector rejects registrations with "clickhouse.auth.type=basic
+# requires auth.username and auth.password" when password is empty.
+#
+# Security posture: the password is trivial ("demopass") because real
+# access control is enforced at the VPC SG layer (port 8123 is only
+# reachable from Machine A's SG). If you expose CH publicly, change this
+# to a strong secret and update register-datasource.sh accordingly.
 cat > /mnt/ebs/ch-config.d/users.xml <<'EOF'
 <clickhouse>
   <profiles>
@@ -92,7 +98,7 @@ cat > /mnt/ebs/ch-config.d/users.xml <<'EOF'
   </profiles>
   <users>
     <default>
-      <password></password>
+      <password>demopass</password>
       <networks>
         <!-- Accept from VPC (SG enforces which source). -->
         <ip>::/0</ip>
