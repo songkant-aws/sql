@@ -84,6 +84,10 @@ $(SLIDES_PDF): $(SLIDES_HTML)
 	  exit 1; \
 	fi
 	@echo "Using browser: $(CHROME)"
+	@# Chrome headless on macOS prints a handful of unrelated errors on
+	@# startup/shutdown (GCM registration, task_policy_set, allocator
+	@# warnings). They are noise; silence stderr and rely on the post-
+	@# build size check to flag real failures.
 	"$(CHROME)" \
 	  --headless=new \
 	  --no-sandbox \
@@ -94,7 +98,7 @@ $(SLIDES_PDF): $(SLIDES_HTML)
 	  --hide-scrollbars \
 	  --print-to-pdf-no-header \
 	  --print-to-pdf="$(abspath $(SLIDES_PDF))" \
-	  "file://$(abspath $(SLIDES_HTML))?print-pdf"
+	  "file://$(abspath $(SLIDES_HTML))?print-pdf" 2>/dev/null
 	@# Sanity: an empty reveal.js PDF is usually <10KB (no slides rendered).
 	@# A real 11-slide deck is ~500KB–2MB. Warn the operator if the
 	@# virtual-time-budget wasn't long enough for the CDN to load.
