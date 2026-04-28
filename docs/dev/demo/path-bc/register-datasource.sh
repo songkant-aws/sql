@@ -89,18 +89,26 @@ with open("/tmp/ch-columns.tsv") as f:
         for prefix in ("LowCardinality(", "Nullable("):
             if base.startswith(prefix):
                 base = base[len(prefix):-1]
+        # CH type -> plugin expr_type. Constrained by the plugin's type
+        # whitelist in ClickHouseTypeMapper. Notably:
+        #   - UInt8 must map to SHORT or BOOLEAN (not BYTE); here we
+        #     pick BOOLEAN because verified_purchase is semantically a
+        #     bool in this demo. If the column is a true small integer,
+        #     override to SHORT.
+        #   - Int8 / UInt16 / UInt32 / UInt64 likewise have constrained
+        #     mappings; check ClickHouseTypeMapper if you extend this.
         mapping = {
-            "String": "STRING",
+            "String":  "STRING",
             "Float32": "FLOAT",
             "Float64": "DOUBLE",
-            "UInt8": "BYTE",
-            "UInt16": "SHORT",
-            "UInt32": "INTEGER",
-            "UInt64": "LONG",
-            "Int8": "BYTE",
-            "Int16": "SHORT",
-            "Int32": "INTEGER",
-            "Int64": "LONG",
+            "UInt8":   "BOOLEAN",
+            "UInt16":  "INTEGER",
+            "UInt32":  "LONG",
+            "UInt64":  "LONG",
+            "Int8":    "SHORT",
+            "Int16":   "SHORT",
+            "Int32":   "INTEGER",
+            "Int64":   "LONG",
         }
         expr_type = mapping.get(base, "STRING")
         cols.append({"name": name, "ch_type": ch_type, "expr_type": expr_type})
