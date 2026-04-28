@@ -807,30 +807,14 @@
     <!-- ============ APPENDIX: EXPLAIN OUTPUT FOR ENGINEERS ============ -->
     <section class="appendix-slide">
       <div class="kicker">Appendix · for the technically curious</div>
-      <h2 style="font-size: 1.1em; margin-bottom: 0.2em;">
-        Path C Calcite plan — IN-list pushdown at the JDBC layer
+      <h2 style="font-size: 1.05em; margin-bottom: 0.15em;">
+        Path C physical plan — IN-list pushdown at the JDBC layer
       </h2>
-      <p style="font-size: 0.7em; color: var(--muted); margin-bottom: 0.5em;">
-        Output of <code>POST /_plugins/_ppl/_explain?format=yaml</code> on the benchmark query.
-        Highlights: the JDBC subtree shipped to ClickHouse, and the <code>ARRAY_IN($0, ?0)</code>
-        filter that <code>SideInputInListRule</code> inserted above the scan.
+      <p style="font-size: 0.62em; color: var(--muted); margin-bottom: 0.35em;">
+        <code>POST /_plugins/_ppl/_explain?format=yaml</code> · physical tree only
+        (logical omitted for space).
       </p>
 <pre class="explain-yaml"><code data-noescape>calcite:
-  logical: |
-    LogicalSystemLimit(fetch=[10000], type=[QUERY_SIZE_LIMIT])
-      LogicalProject(avg_r=[$1], n=[$2], parent_asin=[$0])
-        LogicalAggregate(group=[{0}], avg_r=[AVG($1)], n=[COUNT()])
-          LogicalProject(parent_asin=[$1], rating=[$11])
-            LogicalJoin(condition=[=($1, $10)], joinType=[inner])
-              LogicalProject(features=[$0], parent_asin=[$1], price=[$2], ..., title=[$9])
-                LogicalSort(sort0=[$12], dir0=[DESC-nulls-last], fetch=[50])
-                  LogicalFilter(condition=[match(MAP('field', $9), MAP('query', 'stainless steel cookware':VARCHAR))])
-                    CalciteLogicalIndexScan(table=[[OpenSearch, products]])
-              LogicalSystemLimit(fetch=[50000], type=[JOIN_SUBSEARCH_MAXOUT])
-                LogicalProject(parent_asin=[$0], rating=[$3])
-                  LogicalFilter(condition=[&gt;($5, 1640995200000)])
-                    JdbcTableScan(table=[[ClickHouse, ch, fed, reviews]])
-
   physical: |
     EnumerableLimit(fetch=[10000])
       EnumerableCalc(... avg_r, n, parent_asin ...)
@@ -861,17 +845,32 @@
         <div class="callout">
           <span class="callout-badge hl-arrayin-badge">ARRAY_IN($0, ?0)</span>
           <span class="callout-text">
-            The IN-list filter. At runtime, <code>?0</code> is bound to the 50
-            distinct <code>parent_asin</code>s drained from the left side. CH's MergeTree
-            primary-key index skips &gt;99 % of partitions → 67 M rows scanned → 360 K.
+            Runtime IN-list. <code>?0</code> is bound to the 50 distinct
+            <code>parent_asin</code>s drained from the left. CH's MergeTree PK
+            skips &gt;99 % of partitions → 67 M rows scanned → 360 K.
           </span>
         </div>
       </div>
+      <p style="font-size: 0.6em; color: var(--muted); margin-top: 0.5em; font-style: italic;">
+        <strong>Not pushed to CH:</strong> the <code>Aggregate</code> sits above the Join,
+        since <code>stats</code> is outside the subsearch in this PPL shape. With the IN-list
+        already narrowing the scan to ~1 K rows, pushing the agg down would save bytes on
+        the wire, not latency. Rule scope: outer-agg shape; inner-agg (<code>stats</code>
+        inside the subsearch) is a separate optimization.
+      </p>
       <aside class="notes">
-        Not for the main pitch — appendix for technical Q&amp;A. If an engineer
-        asks "how does the rule actually rewrite the plan?", flip here and point
-        at the three highlighted regions from bottom-up: the scan, the
-        rule-inserted filter, and the hash-join shape the rule needs.
+        Appendix — not part of the main 5-min flow. Flip here when an
+        engineer asks "how does the rule actually rewrite the plan?".
+        Walk the highlights bottom-up:
+          1. JdbcTableScan — the only thing the rule touches
+          2. JdbcFilter with ARRAY_IN — the rule's output
+          3. EnumerableHashJoin — the operand precondition
+
+        Common Q: "why isn't the Aggregate pushed to CH?" — because
+        the PPL `stats` clause is outside the subsearch (outer-agg
+        shape). With IN-list already narrowing to ~1K rows, pushing
+        Agg would cut wire bytes but not wall-clock. A separate rule
+        would be needed for inner-agg shape.
       </aside>
     </section>
 
