@@ -35,7 +35,13 @@ CH_PASSWORD="${CH_PASSWORD:-demopass}"
 #                 the JDBC driver rejects bare http:// URLs with
 #                 "Driver ... claims to not accept jdbcUrl".
 CH_HTTP_URL="http://$CH_PRIVATE_IP:8123"
-CH_JDBC_URL="jdbc:clickhouse://$CH_PRIVATE_IP:8123"
+# Plugin uses clickhouse-jdbc 0.6.5, which registers its Driver under the
+# `jdbc:ch://` scheme (not `jdbc:clickhouse://`; see HikariClickHouseClient
+# commentary). Using the wrong scheme yields either:
+#   "Driver ... claims to not accept jdbcUrl" (wrong prefix), or
+#   HikariCP connection timeout after 5s (right prefix but driver silently
+#   refuses to resolve the URL under the plugin classloader isolation).
+CH_JDBC_URL="jdbc:ch://$CH_PRIVATE_IP:8123"
 # Backward-compatible alias for existing references; still points at HTTP
 # since the local curl usage predates the JDBC split.
 CH_URL="$CH_HTTP_URL"
