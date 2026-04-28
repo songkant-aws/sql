@@ -65,42 +65,48 @@ if [ -z "$CH_COLUMNS" ]; then
 fi
 
 # Build schema JSON. Map CH types to expr types used by the plugin.
-# See ClickHouseTypeMapper for authoritative mapping; here we use the
-# common subset for our table.
-python3 > /tmp/schema.json <<PYEOF
-import json, sys
+# Feed $CH_COLUMNS through a temp file so Python reads real file content
+# instead of relying on bash variable expansion into a Python string
+# literal (which breaks on embedded quotes, backslashes, or newlines
+# and — with `set -u` / `pipefail` — exits silently).
+echo "$CH_COLUMNS" > /tmp/ch-columns.tsv
 
-# input from shell: TSV "name\ttype"
+CH_DATABASE_ENV="$CH_DATABASE" python3 > /tmp/schema.json <<'PYEOF'
+import json, os
+
+ch_database = os.environ["CH_DATABASE_ENV"]
+
 cols = []
-for line in """$CH_COLUMNS""".strip().splitlines():
-    name, ch_type = line.split("\t")
-    # Strip LowCardinality/Nullable wrappers for mapping lookup
-    base = ch_type
-    for prefix in ("LowCardinality(", "Nullable("):
-        if base.startswith(prefix):
-            base = base[len(prefix):-1]
-
-    # Expr type mapping
-    mapping = {
-        "String": "STRING",
-        "Float32": "FLOAT",
-        "Float64": "DOUBLE",
-        "UInt8": "BYTE",
-        "UInt16": "SHORT",
-        "UInt32": "INTEGER",
-        "UInt64": "LONG",
-        "Int8": "BYTE",
-        "Int16": "SHORT",
-        "Int32": "INTEGER",
-        "Int64": "LONG",
-    }
-    expr_type = mapping.get(base, "STRING")
-    cols.append({"name": name, "ch_type": ch_type, "expr_type": expr_type})
+with open("/tmp/ch-columns.tsv") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        name, ch_type = line.split("\t")
+        base = ch_type
+        for prefix in ("LowCardinality(", "Nullable("):
+            if base.startswith(prefix):
+                base = base[len(prefix):-1]
+        mapping = {
+            "String": "STRING",
+            "Float32": "FLOAT",
+            "Float64": "DOUBLE",
+            "UInt8": "BYTE",
+            "UInt16": "SHORT",
+            "UInt32": "INTEGER",
+            "UInt64": "LONG",
+            "Int8": "BYTE",
+            "Int16": "SHORT",
+            "Int32": "INTEGER",
+            "Int64": "LONG",
+        }
+        expr_type = mapping.get(base, "STRING")
+        cols.append({"name": name, "ch_type": ch_type, "expr_type": expr_type})
 
 schema = {
     "databases": [
         {
-            "name": "$CH_DATABASE",
+            "name": ch_database,
             "tables": [
                 {"name": "reviews", "columns": cols}
             ]
@@ -110,31 +116,31 @@ schema = {
 print(json.dumps(schema))
 PYEOF
 
-SCHEMA_JSON_ESCAPED=$(python3 -c "import json,sys; print(json.dumps(open('/tmp/schema.json').read()))")
-# SCHEMA_JSON_ESCAPED is now a JSON-string-literal (with surrounding quotes).
-# Strip the outer quotes so we can inline it as a string value in our
-# datasource JSON.
-SCHEMA_INLINE=$(python3 -c "import json,sys; print(open('/tmp/schema.json').read())")
-
 # ------------------------------------------------------------
 # 3. Register datasource
 # ------------------------------------------------------------
 log "Registering datasource '$DS_NAME' → $CH_URL ..."
 
-# Build the datasource creation body. Schema JSON must be embedded as a
-# string value (hence the nested json.dumps).
-python3 > /tmp/ds-body.json <<PYEOF
-import json
+# Build the datasource creation body. All values come from env vars so the
+# Python heredoc can stay single-quoted and not need shell expansion.
+# clickhouse.schema must be a string (not a nested object) per the plugin's
+# expected shape — hence reading /tmp/schema.json as raw text.
+DS_NAME_ENV="$DS_NAME" \
+CH_URL_ENV="$CH_URL" \
+CH_USER_ENV="$CH_USER" \
+CH_PASSWORD_ENV="$CH_PASSWORD" \
+python3 > /tmp/ds-body.json <<'PYEOF'
+import json, os
 body = {
-    "name": "$DS_NAME",
+    "name":      os.environ["DS_NAME_ENV"],
     "connector": "CLICKHOUSE",
     "properties": {
-        "clickhouse.uri": "$CH_URL",
-        "clickhouse.auth.type": "basic",
-        "clickhouse.auth.username": "$CH_USER",
-        "clickhouse.auth.password": "$CH_PASSWORD",
-        "clickhouse.schema": open("/tmp/schema.json").read()
-    }
+        "clickhouse.uri":           os.environ["CH_URL_ENV"],
+        "clickhouse.auth.type":     "basic",
+        "clickhouse.auth.username": os.environ["CH_USER_ENV"],
+        "clickhouse.auth.password": os.environ["CH_PASSWORD_ENV"],
+        "clickhouse.schema":        open("/tmp/schema.json").read(),
+    },
 }
 print(json.dumps(body))
 PYEOF
