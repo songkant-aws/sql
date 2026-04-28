@@ -51,6 +51,7 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   private static final String OS_INDEX = "fed_docs";
   private static final String OS_INDEX_LARGE = "fed_docs_large";
   private static final String OS_INDEX_EMPTY = "fed_docs_empty";
+  private static final String OS_INDEX_BM25 = "fed_docs_bm25";
   private static final String CH_DATABASE = "fed";
   private static final String CH_TABLE = "fed_events";
 
@@ -89,6 +90,11 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
       client().performRequest(new Request("DELETE", "/" + OS_INDEX_EMPTY));
     } catch (Exception ignored) {
       // best-effort cleanup — only the empty-left test creates this index
+    }
+    try {
+      client().performRequest(new Request("DELETE", "/" + OS_INDEX_BM25));
+    } catch (Exception ignored) {
+      // best-effort cleanup — only the bm25 repro test creates this index
     }
   }
 
@@ -412,6 +418,123 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
     assertTrue(
         "non-agg right side: user_id=5 must be present. Got: " + observedUserIds,
         observedUserIds.contains(5));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reproduces the `WHERE user_id IN (NULL)` runtime-binding bug described in
+  // docs/dev/bug-in-list-pushdown-null-binding.md. Two ingredients are needed:
+  //   (a) the right CH sub-search carries a user `where` predicate adjacent to
+  //       our JdbcSideInputFilter, so Calcite's FilterMergeRule (which matches on
+  //       Filter.class) collapses the two filters into a single plain JdbcFilter
+  //       whose condition is AND(ARRAY_IN($0, ?0), <user pred>) — losing the
+  //       JdbcSideInputFilter subtype;
+  //   (b) an outer aggregate by the join key, which mirrors the failing shape
+  //       from the bug doc (the outer agg is not load-bearing for the bug itself,
+  //       but keeps the repro aligned with the original observation).
+  // Prior to the fix, SideInputBindableWrapper.findSideInputFilter keyed off the
+  // rel class, so (a) caused it to return null — the ?0 dynamic param was never
+  // bound, and the JDBC driver rendered `IN (NULL)`, which matches zero rows.
+  // After the fix, detection keys off the ARRAY_IN_OP marker in the condition,
+  // so class-loss via merge no longer defeats the runtime binder.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void testSingleColumnLeftProjectionBindsRealKeys() throws Exception {
+    // Dedicated BM25-mapped index so match() + sort -_score + head mimic the exact
+    // failing shape from docs/dev/bug-in-list-pushdown-null-binding.md.
+    try {
+      client().performRequest(new Request("DELETE", "/" + OS_INDEX_BM25));
+    } catch (Exception ignored) {
+      // not yet created
+    }
+    Request create = new Request("PUT", "/" + OS_INDEX_BM25);
+    // 3 shards so match-score-ordered docs arrive from multiple shards, mirroring the
+    // production setup that reproduces the bug (docs/dev/bug-in-list-pushdown-null-binding.md).
+    create.setJsonEntity(
+        "{\"settings\":{\"index\":{\"number_of_shards\":3,\"number_of_replicas\":0}},"
+            + "\"mappings\":{\"properties\":{"
+            + "\"user_id\":{\"type\":\"long\"},"
+            + "\"title\":{\"type\":\"text\"}"
+            + "}}}");
+    client().performRequest(create);
+    Request bulk = new Request("POST", "/" + OS_INDEX_BM25 + "/_bulk");
+    bulk.addParameter("refresh", "true");
+    bulk.setJsonEntity(
+        "{\"index\":{}}\n"
+            + "{\"user_id\":1,\"title\":\"stainless steel cookware alpha\"}\n"
+            + "{\"index\":{}}\n"
+            + "{\"user_id\":3,\"title\":\"stainless steel cookware beta\"}\n"
+            + "{\"index\":{}}\n"
+            + "{\"user_id\":5,\"title\":\"stainless steel cookware gamma\"}\n");
+    client().performRequest(bulk);
+
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      truncateChQueryLog(c);
+    }
+
+    // Left: BM25 match + sort -_score + head 50 — forces the OS-side pushdown chain
+    // (FILTER + SORT + LIMIT + PROJECT->[user_id]) that reduces the left scan to a
+    // single-column row at runtime. This is the exact plan shape in the bug doc.
+    // Right: non-aggregated (fields only), matches the repro's
+    //   `| where timestamp > ... | fields parent_asin, rating`.
+    // Outer: stats avg(v) as avg_v by user_id — outer-aggregate post-join shape.
+    // Right-side `where v > 0` is the trigger: it creates a filter adjacent to our
+    // JdbcSideInputFilter on the CH subtree. Calcite's FilterMergeRule then collapses
+    // the two into a plain JdbcFilter holding AND(ARRAY_IN(...), v > 0); see the
+    // test-method header comment for the bug mechanics.
+    String ppl =
+        "source="
+            + OS_INDEX_BM25
+            + " | where match(title, 'stainless steel cookware')"
+            + " | sort -_score"
+            + " | head 50"
+            + " | fields user_id"
+            + " | inner join left=d right=f on d.user_id = f.user_id"
+            + " [ source="
+            + DS_NAME
+            + "."
+            + CH_DATABASE
+            + "."
+            + CH_TABLE
+            + " | where v > 0"
+            + " | fields user_id, v ]"
+            + " | stats avg(v) as avg_v by user_id";
+    JSONObject j = executeQuery(ppl);
+
+    // (1) Result must include the seeded user_ids 1, 3, 5. Before the fix this returned 0 rows.
+    JSONArray rows = j.getJSONArray("datarows");
+    assertThat(
+        "single-column-left outer-agg join must emit at least one row per seeded user (3)",
+        rows.length(),
+        greaterThanOrEqualTo(3));
+    int userIdCol = findUserIdColumn(j);
+    Set<Integer> observedUserIds = new HashSet<>();
+    for (int i = 0; i < rows.length(); i++) {
+      observedUserIds.add(rows.getJSONArray(i).getInt(userIdCol));
+    }
+    assertTrue("user_id=1 must be present. Got: " + observedUserIds, observedUserIds.contains(1));
+    assertTrue("user_id=3 must be present. Got: " + observedUserIds, observedUserIds.contains(3));
+    assertTrue("user_id=5 must be present. Got: " + observedUserIds, observedUserIds.contains(5));
+
+    // (2) CH query_log must show the IN-list with real keys, not IN (NULL).
+    List<String> observed;
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      observed = readChQueryLogForFedEvents(c);
+    }
+    String dump = dumpObservedSql("CH query_log (single-col-left bug repro)", observed);
+    String inListSql = findInListSql(observed);
+    assertFalse(
+        "CH must not see IN (NULL) — that was the bug shape\n" + dump,
+        Pattern.compile("IN\\s*\\(\\s*NULL\\s*\\)", Pattern.CASE_INSENSITIVE)
+            .matcher(inListSql)
+            .find());
+    assertThat(
+        "CH IN-list must bind real distinct keys {1,3,5}\n" + dump,
+        hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
+        equalTo(true));
   }
 
   // ---------------------------------------------------------------------------

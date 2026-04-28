@@ -33,8 +33,13 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.TableModify;
+import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexVisitorImpl;
+import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.runtime.ArrayBindable;
 import org.apache.calcite.runtime.Bindable;
 import org.apache.calcite.schema.SchemaPlus;
@@ -107,9 +112,8 @@ public final class SideInputBindableWrapper implements PreparedResult {
       // Plan shape changed between prepare and bind — degrade to the inner bindable.
       return inner.bind(ctx);
     }
-    JdbcSideInputFilter filter = findSideInputFilter(join.getRight());
-    if (filter == null) {
-      // No side-input filter on the right after all — fall back to the generated code unmodified.
+    if (!hasSideInputMarker(join.getRight())) {
+      // No ARRAY_IN(?0) marker on the right after all — fall back to the generated code unmodified.
       return inner.bind(ctx);
     }
 
@@ -561,19 +565,52 @@ public final class SideInputBindableWrapper implements PreparedResult {
     return -1;
   }
 
-  /** Walks the right subtree for the first {@link JdbcSideInputFilter}, or {@code null}. */
-  private static JdbcSideInputFilter findSideInputFilter(RelNode root) {
+  /**
+   * Returns {@code true} if any {@link Filter} under {@code root} carries an {@link
+   * JdbcSideInputFilter#ARRAY_IN_OP} call anywhere in its condition.
+   *
+   * <p>Detection keys off the operator, not the rel class, because Calcite's {@link
+   * org.apache.calcite.rel.rules.FilterMergeRule} (configured on {@link Filter}.class) will collapse
+   * an adjacent {@link JdbcSideInputFilter} + user {@code Filter} into a plain {@link Filter}
+   * whose condition is {@code AND(ARRAY_IN(...), <user-predicate>)}. The merged node is no longer a
+   * {@link JdbcSideInputFilter} subtype, but it still holds the {@code ARRAY_IN(?0)} call that the
+   * runtime binder must supply — so class-based detection would drop the binding and leave {@code
+   * ?0} unresolved, which the JDBC driver renders as {@code IN (NULL)}. Operator-based detection
+   * survives the merge. See {@code testSingleColumnLeftProjectionBindsRealKeys} in
+   * ClickHouseFederationIT for the end-to-end repro.
+   */
+  @VisibleForTesting
+  static boolean hasSideInputMarker(RelNode root) {
     RelNode stripped = unwrap(root);
-    if (stripped instanceof JdbcSideInputFilter) {
-      return (JdbcSideInputFilter) stripped;
-    }
-    for (RelNode child : stripped.getInputs()) {
-      JdbcSideInputFilter found = findSideInputFilter(child);
-      if (found != null) {
-        return found;
+    if (stripped instanceof Filter) {
+      Filter filter = (Filter) stripped;
+      if (conditionContainsArrayInOp(filter.getCondition())) {
+        return true;
       }
     }
-    return null;
+    for (RelNode child : stripped.getInputs()) {
+      if (hasSideInputMarker(child)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean conditionContainsArrayInOp(RexNode condition) {
+    final boolean[] found = {false};
+    condition.accept(
+        new RexVisitorImpl<Void>(true) {
+          @Override
+          public Void visitCall(RexCall call) {
+            SqlOperator op = call.getOperator();
+            if (op == JdbcSideInputFilter.ARRAY_IN_OP) {
+              found[0] = true;
+              return null;
+            }
+            return super.visitCall(call);
+          }
+        });
+    return found[0];
   }
 
   /**
@@ -617,18 +654,19 @@ public final class SideInputBindableWrapper implements PreparedResult {
   }
 
   /**
-   * Locates the first {@link Join} under {@code root} whose right subtree contains a {@link
-   * JdbcSideInputFilter}. Detecting the target by the filter's presence (rather than by the
-   * {@code bounded_left} hint) is necessary because Volcano's {@code EnumerableJoinRule.convert}
-   * strips hints during the {@code LogicalJoin} -> {@code EnumerableHashJoin} conversion. The
-   * filter, by contrast, is unambiguous and survives planning because it's the very artifact
-   * {@link SideInputInListRule} inserts.
+   * Locates the first {@link Join} under {@code root} whose right subtree contains an {@link
+   * JdbcSideInputFilter#ARRAY_IN_OP} marker. Detecting the target by the marker (rather than by
+   * the {@code bounded_left} hint) is necessary because Volcano's {@code EnumerableJoinRule.convert}
+   * strips hints during the {@code LogicalJoin} -> {@code EnumerableHashJoin} conversion. Using the
+   * operator (rather than the {@link JdbcSideInputFilter} subclass) is necessary because Calcite's
+   * {@code FilterMergeRule} can merge our filter with an adjacent user filter into a plain {@link
+   * Filter}, losing the subtype while preserving the {@code ARRAY_IN} call in the condition.
    */
   static Join findBoundedJoin(RelNode root) {
     RelNode cur = unwrap(root);
     if (cur instanceof Join) {
       Join j = (Join) cur;
-      if (findSideInputFilter(j.getRight()) != null) {
+      if (hasSideInputMarker(j.getRight())) {
         return j;
       }
     }
