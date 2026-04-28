@@ -1,8 +1,8 @@
 # PPL Federation - 4-minute demo transcript
 
-Target: about 4:00 spoken, with a small buffer for slide changes.
-Pacing: keep the results slide slow; move quickly through RAG and
-architecture unless the room asks for details.
+Target: about 4:10 spoken, with a small buffer for slide changes.
+Pacing: keep the results slide slow; RAG gets a little more explanation
+because it connects the demo to AI agent workloads.
 
 Each section marks **[on slide]** with the title in `slides.html`,
 followed by the words to say. Stage directions are in *italic*.
@@ -28,7 +28,8 @@ reviews, clickstream, orders, long-term spans. Today customers either
 duplicate that data into OpenSearch, or stitch the answer together in
 application code.
 
-Both choices create an ETL tax that grows with the data."
+Both choices create an ETL tax that grows with the data, and every new
+workflow has to remember where each piece of the answer lives."
 
 ---
 
@@ -76,7 +77,7 @@ from OpenSearch and bind those keys into a ClickHouse `WHERE IN`
 filter.
 
 The customer does not learn a new language. The planner chooses the
-backend."
+backend, while the query still reads like one workflow."
 
 ---
 
@@ -118,20 +119,32 @@ table.
 Third, correctness: the fact-side work is no longer boxed in by the
 single-engine subsearch cap.
 
+That means this is a planner pattern: bounded search on the left,
+fact-scale analytics on the right, and one PPL query across both.
+
 And the PPL stays unchanged."
 
 ---
 
-## [on slide 8 - RAG] - 20 s
+## [on slide 8 - RAG] - 35 s
 
-"The same pattern matters beyond retail.
+"The same pattern matters beyond retail, especially for AI agents.
 
 For RAG, swap BM25 for k-NN. OpenSearch retrieves the top documents;
 the external fact store enriches them with interactions or business
 metrics.
 
-That gives one query entry point: relevance in OpenSearch, facts in
-the system built for facts."
+That is agent-friendly for two reasons.
+
+First, the agent gets one stable tool surface: PPL. It does not need to
+know which system owns vectors, which owns events, or how to join them.
+
+Second, the answer is grounded in fresh business data. The agent can
+retrieve the right documents, then rank or explain them using facts
+like engagement, purchases, incidents, or account state.
+
+So the shape is the same: relevance in OpenSearch, facts in the system
+built for facts, one query entry point."
 
 ---
 
@@ -195,9 +208,9 @@ optimization does not introduce a second customer-visible query."
 | 5. Three paths | 25 s | 1:50 |
 | 6. Results | 45 s | 2:35 |
 | 7. Speedup layers | 25 s | 3:00 |
-| 8. RAG | 20 s | 3:20 |
-| 9. Architecture | 20 s | 3:40 |
-| 10. Close | 20 s | 4:00 |
+| 8. RAG | 35 s | 3:45 |
+| 9. Architecture | 20 s | 4:05 |
+| 10. Close | 20 s | 4:25 |
 
 ## Delivery notes
 
@@ -207,14 +220,18 @@ optimization does not introduce a second customer-visible query."
   bug. The point is that workload routing is the cleaner answer.
 - **Slide 6:** say only the headline rows: ingest, storage, latency,
   rows scanned, correctness. Let the rest of the table support you.
-- **Slide 8 and 9:** these are proof that the idea generalizes and is
-  simple to use. Do not over-explain them in the main 4-minute run.
+- **Slide 8:** connect explicitly to AI agents: one stable tool
+  surface, fresh business facts, less orchestration in application
+  code.
+- **Slide 9:** proof that the idea stays simple to use. Do not
+  over-explain it in the main run.
 - **Appendix:** open only if asked about the planner mechanics.
 
 ## Optional cuts for a strict room
 
-- Skip slide 8's second sentence and say only: "The same federation
-  pattern also covers RAG: OpenSearch retrieves, the fact store
-  enriches." Saves about 10 seconds.
+- For a hard 4-minute slot, compress slide 8 to: "For AI agents, this
+  gives one PPL tool surface. OpenSearch retrieves with k-NN, the fact
+  store enriches with fresh business data, and the agent does not have
+  to orchestrate two systems itself." Saves about 15 seconds.
 - On slide 6, if time is tight, skip the storage row and go directly
   from ingest to latency. Saves about 8 seconds.
