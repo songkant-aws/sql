@@ -19,7 +19,11 @@ CREATE TABLE fed.reviews (
     asin              String,
     user_id           String,
     rating            Float32,
-    helpful_vote      UInt32,
+    -- Int32 not UInt32: the Amazon Reviews 2023 corpus contains a handful
+    -- of negative helpful_vote values (data-quality artifact of the
+    -- original source), which CH rejects with CANNOT_PARSE_NUMBER against
+    -- an unsigned column.
+    helpful_vote      Int32,
     timestamp         Int64,
     verified_purchase UInt8,
     title             String CODEC(ZSTD(3)),
