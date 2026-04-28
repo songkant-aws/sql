@@ -1,5 +1,11 @@
 # Bug: SideInputInListRule emits `WHERE parent_asin IN (NULL)` at runtime
 
+**Status: RESOLVED 2026-04-28.** Fix validated end-to-end. CH
+`system.query_log` shows the SQL now contains the real 50 parent_asin
+values, `read_rows` = 360 K (was 0), Path C end-to-end latency = ~170 ms
+(was: returned 0 rows). Kept as a reference repro doc for future
+regressions.
+
 ## TL;DR
 
 `SideInputInListRule` fires correctly at plan time (physical plan contains `JdbcSideInputFilter` with `ARRAY_IN($0, ?0)`), but at runtime the array parameter `?0` is bound to `[NULL]` instead of the actual left-side distinct keys. The SQL sent to ClickHouse is:

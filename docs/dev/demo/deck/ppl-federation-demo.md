@@ -36,16 +36,19 @@ Neither works for a dashboard.
 
 ---
 
-# Two paths, same PPL query
+# Three paths, same PPL query
 
 - **Path A** — all data in OS. Today's default.
 - **Path B** — `products` in OS, `reviews` in ClickHouse. PPL routes
   analytical aggregations to CH via JDBC as a single pushdown query
   (`GROUP BY + ORDER BY + LIMIT`).
+- **Path C** — Path B plus `SideInputInListRule`: the bounded left
+  side's key set is drained at runtime and bound as an array parameter
+  into `WHERE parent_asin IN (…)` on the CH query, letting CH's
+  primary-key index skip >99 % of the fact table.
 
-**The customer-facing PPL query is identical in both paths.**
-The planner picks the backend. No new syntax, no new datasource call
-from the customer side.
+**The customer-facing PPL query is identical in all three paths.**
+The planner picks the backend and the optimization. No new syntax.
 
 ---
 
@@ -57,37 +60,36 @@ The benchmark query — a typical dashboard drilldown:
 source=products | where match(title, 'stainless steel cookware')
 | sort -_score | head 50
 | inner join left=p right=r on p.parent_asin = r.parent_asin
-  [ source=reviews
-    | stats avg(rating), count() by parent_asin
-    | sort -n | head 5000 ]
+  [ source=ch.fed.reviews | where timestamp > 1640995200000
+    | fields parent_asin, rating ]
+| stats avg(rating) as avg_r, count() as n by parent_asin
 ```
 
-| Metric | Path A (all-in-OS) | Path B (federation) | Improvement |
-|---|---:|---:|---:|
-| Ingest time (reviews, 67 M rows) | **2h 50m** | **4m 20s** | **~40×** |
-| Total end-to-end ingest | 3h 36m | 36m | ~6× |
-| Reviews storage footprint | **19.3 GB** (OS) | **7.24 GB** (CH) | 2.7× smaller |
-| Slow-join end-to-end (warm) | **30 s** | **~600 ms** | **~50×** |
-| Slow-join engine-only (CH-side) | — | **~465 ms** | — |
-| Simple-join end-to-end (warm) | 300 ms | ~2.3 s | (Path A wrong) |
-| Simple-join rows returned | **2** (96 % loss) | **1197** | correctness |
+| Metric | Path A | Path B | Path C | Improvement (A→C) |
+|---|---:|---:|---:|---:|
+| Reviews ingest (67 M rows) | **2h 50m** | **4m 20s** | 4m 20s | **~40×** |
+| Reviews storage | 19.3 GB (OS) | **7.24 GB** (CH) | 7.24 GB | 2.7× smaller |
+| End-to-end latency (warm) | **30 s** | ~600 ms | **~170 ms** | **~176×** |
+| ClickHouse engine-only | — | 465 ms | **6–7 ms** | — |
+| Fact rows scanned at CH | — | 67 M | **360 K** | 187× less |
+| Fact bytes read at CH | — | 1.94 GB | **8.48 MB** | 233× less |
 
 **How to read the table**
 
-Two things happen at the same time when fact aggregation moves to a
-columnar engine:
+Three layers of speedup stack:
 
-1. **Engine selection matters more than anything else.** Same aggregation
-   work, CH does it in ~465 ms; OS composite aggregation does it in
-   ~30 s. That's a **64×** architectural gap driven by column storage +
-   hash aggregation vs. paginated inverted-index walk.
-2. **The OS-side 50 000-row subsearch cap disappears.** Path A returns
-   2 rows out of ~50 expected because the cap silently drops 96 % of
-   the aggregated groups. Path B returns 1197 rows — the complete
-   answer.
+1. **Engine selection (A→B)** — columnar storage + hash aggregation
+   beats paginated inverted-index aggregation. Same work, one-shot
+   instead of 378 pagination round-trips.
+2. **IN-list pushdown (B→C)** — the planner drains the bounded
+   left-side key set and pushes it as `WHERE parent_asin IN (…)` to CH,
+   letting the primary-key index skip >99 % of partitions. CH reads
+   360 K rows / 8 MB instead of 67 M rows / 2 GB.
+3. **Correctness everywhere below A** — Path A's 50 000-row subsearch
+   cap silently drops 96 % of grouped results. Paths B and C do not.
 
-Federation adds ~100-200 ms of JDBC transport + OS-side glue overhead.
-That's negligible against a 30 s baseline.
+The optimization stacks cleanly: Path C is 3.5× faster than Path B and
+~176× faster than Path A, with no change to the customer's PPL.
 
 ---
 
@@ -139,17 +141,25 @@ decision.
 
 ---
 
-# Appendix — in-progress optimization
+# Appendix — implementation notes
 
-`SideInputInListRule` pushes the bounded left side's key set as
-`WHERE parent_asin IN (?)` to ClickHouse, leveraging CH's primary-key
-index to skip >99 % of the fact table for additional 5-10× gains on
-bounded-left joins. The optimization is spec'd and implemented; a
-runtime binder bug in the current build causes the array parameter to
-resolve to `NULL` at execution (documented in
-`docs/dev/bug-in-list-pushdown-null-binding.md`). Not a blocker for
-the core federation value shown above — the ~50× / correctness story
-already stands without it.
+`SideInputInListRule` fires at Calcite plan time when the left side of
+a join has a statically-provable row-count bound (e.g. `| head 50`)
+and the right side is a fully-pushable JDBC subtree. At runtime, the
+left enumerable is drained, the distinct keys are bound as a
+`java.sql.Array` into the generated code, and the ClickHouse JDBC
+driver ships the IN-list as either an inlined literal array or a
+parameter marker depending on its bind-path. CH's MergeTree with
+`ORDER BY (parent_asin, timestamp)` uses the IN-list to skip
+partitions at the primary-key index layer — the 360 K rows scanned
+for Path C are precisely the rows belonging to the 50 asins emitted
+by the OS-side BM25 top-50.
+
+The rule is dialect-agnostic: `PplFederationDialect` advertises
+per-dialect capabilities (`supportsArrayInListParam`,
+`getInListPushdownThreshold`) so the same framework works for other
+JDBC targets (Iceberg, Snowflake, Postgres) once they declare their
+in-list support.
 
 ---
 

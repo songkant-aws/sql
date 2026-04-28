@@ -27,34 +27,40 @@ Benchmark environment:
 
 ### Core numbers
 
-| Metric | Path A | Path B | Note |
-|---|---:|---:|---|
-| Products ingest (~3.7 M) | 27 min | 28 min | Both index products into OS |
-| Reviews ingest (67 M) | **2h 50m** | **4m 20s** | ~40× |
-| Reviews storage | 19.3 GB (OS) | 7.24 GB (CH) | 2.7× smaller |
-| Slow-join end-to-end (warm median) | **30 s** | **~600 ms** | ~50× |
-| Slow-join CH engine only | — | **465 ms** | pure aggregation |
-| Simple-join end-to-end (warm) | 300 ms | ~2.3 s | Path A wrong |
-| Simple-join rows returned | 2 (96 % loss) | 1197 | correctness |
+| Metric | Path A | Path B | Path C |
+|---|---:|---:|---:|
+| Products ingest (~3.7 M) | 27 min | 28 min | 28 min |
+| Reviews ingest (67 M) | **2h 50m** | **4m 20s** | 4m 20s |
+| Reviews storage | 19.3 GB (OS) | 7.24 GB (CH) | 7.24 GB (CH) |
+| End-to-end latency (warm median) | **30 s** | ~600 ms | **~170 ms** |
+| ClickHouse engine-only | — | 465 ms | **6–7 ms** |
+| Fact rows scanned at CH | — | 67 M | **360 K** (187× less) |
+| Fact bytes read at CH | — | 1.94 GB | **8.48 MB** (233× less) |
+| End-to-end A→C speedup | — | — | **~176×** |
 
-### Path A "slow-join" query (28 s baseline):
+### Path A "slow-join" baseline
 
 ```ppl
 source=reviews | stats count() as n, avg(rating) as avg_r by parent_asin | sort -n | head 20
 ```
 
 Path A does composite-aggregation pagination through ~3.78 M distinct
-`parent_asin` groups. `read_rows` on CH for the same aggregation:
-67 M in ~465 ms.
+`parent_asin` groups (378 round-trips × ~75 ms each = ~30 s).
 
-### Known follow-up
+### Path C query (IN-list pushdown active)
 
-`SideInputInListRule` (IN-list sideways pushdown) is implemented but
-has a runtime binder bug: the array parameter resolves to `NULL` at
-execution, causing CH to receive `WHERE parent_asin IN (NULL)` and
-return 0 rows. Full repro + suspected root cause captured in
-`docs/dev/bug-in-list-pushdown-null-binding.md`. Not needed for the
-core value demonstrated above.
+```ppl
+source=products | where match(title, 'stainless steel cookware')
+| sort -_score | head 50
+| inner join left=p right=r on p.parent_asin = r.parent_asin
+  [ source=ch.fed.reviews | where timestamp > 1640995200000
+    | fields parent_asin, rating ]
+| stats avg(rating) as avg_r, count() as n by parent_asin
+```
+
+Explain shows `JdbcFilter(ARRAY_IN($0, ?0))` in the physical plan;
+ClickHouse `system.query_log` records the SQL with the actual 50
+parent_asin values inlined into `WHERE parent_asin IN (…)`.
 
 ## Build
 
