@@ -89,10 +89,23 @@ $(SLIDES_PDF): $(SLIDES_HTML)
 	  --no-sandbox \
 	  --disable-gpu \
 	  --no-pdf-header-footer \
-	  --virtual-time-budget=5000 \
+	  --virtual-time-budget=30000 \
+	  --run-all-compositor-stages-before-draw \
+	  --hide-scrollbars \
 	  --print-to-pdf-no-header \
 	  --print-to-pdf="$(abspath $(SLIDES_PDF))" \
 	  "file://$(abspath $(SLIDES_HTML))?print-pdf"
+	@# Sanity: an empty reveal.js PDF is usually <10KB (no slides rendered).
+	@# A real 11-slide deck is ~500KB–2MB. Warn the operator if the
+	@# virtual-time-budget wasn't long enough for the CDN to load.
+	@size=$$(stat -f%z "$(SLIDES_PDF)" 2>/dev/null || stat -c%s "$(SLIDES_PDF)"); \
+	 if [ "$$size" -lt 50000 ]; then \
+	   echo ""; \
+	   echo "WARNING: $(SLIDES_PDF) is only $$size bytes — slides didn't render."; \
+	   echo "  Likely cause: CDN load timed out. Bump --virtual-time-budget=30000"; \
+	   echo "  in the Makefile higher (try 60000), or pre-fetch reveal.js locally."; \
+	   echo ""; \
+	 fi
 	@echo ""
 	@echo "Built: $(SLIDES_PDF)"
 	@echo "Tip:   open the PDF and verify each slide renders on its own page."
