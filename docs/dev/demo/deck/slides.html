@@ -55,35 +55,33 @@
       justify-content: flex-start;
     }
 
-    /* Print-PDF mode (reveal.js's print stylesheet wraps each slide in
-       .pdf-page with a fixed height). By default `.reveal section` loses
-       its flex behavior inside the print pages because reveal.js overrides
-       it. Re-apply the flex centering for print so the PDF matches the
-       on-screen layout. */
-    @media print {
-      .reveal .pdf-page > section,
-      .reveal .pdf-page > .pdf-page-content > section,
-      .reveal .slides > section {
-        display: flex !important;
-        flex-direction: column !important;
-        justify-content: center !important;
-        height: 100% !important;
-        min-height: 100% !important;
-      }
-      .reveal .pdf-page > section.top-aligned,
-      .reveal .pdf-page > .pdf-page-content > section.top-aligned,
-      .reveal .slides > section.top-aligned {
-        justify-content: flex-start !important;
-      }
-      /* Preserve the special-slide behaviors (summary / silent / bignum)
-         which have their own justify-content settings. */
-      .reveal .silent-slide,
-      .reveal .bignum-slide {
-        justify-content: center !important;
-      }
-      .reveal .summary-slide {
-        justify-content: flex-start !important;
-      }
+    /* Print-PDF mode. reveal.js activates print styles via the
+       `html.reveal-print` class (NOT the `@media print` query), and its
+       print stylesheet forces `.reveal .slides section { position:
+       absolute; padding: 0; margin: 0; }` with !important. That kills
+       flex centering applied at the section level, so on-screen
+       centering doesn't carry over to the PDF.
+       Fix: inside `html.reveal-print`, turn each section into a flex
+       column that fills its absolute pdf-page box, and let inner
+       justify-content center the content. Top-aligned / summary
+       slides opt out. */
+    html.reveal-print .reveal .slides section {
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: center !important;
+      width: 100% !important;
+      height: 100% !important;
+      padding: 40px 60px !important;
+      box-sizing: border-box !important;
+    }
+    html.reveal-print .reveal .slides section.top-aligned,
+    html.reveal-print .reveal .slides section.summary-slide,
+    html.reveal-print .reveal .slides section.appendix-slide {
+      justify-content: flex-start !important;
+    }
+    html.reveal-print .reveal .slides section.silent-slide,
+    html.reveal-print .reveal .slides section.bignum-slide {
+      justify-content: center !important;
     }
     .reveal .title-slide { text-align: center; }
     .reveal p { margin: 0.35em 0; }
