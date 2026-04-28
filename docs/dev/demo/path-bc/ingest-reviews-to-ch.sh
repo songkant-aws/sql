@@ -82,18 +82,19 @@ curl -sf --data-binary @"$SCHEMA_SQL" "$CH_URL/?database=default" \
 phase_end   "create-schema"
 
 # ------------------------------------------------------------
-# 3. Ingest — stream gz → clickhouse-client via HTTP
+# 3. Ingest — stream gz → clickhouse-client (not curl)
 # ------------------------------------------------------------
-# We feed JSONEachRow to CH's HTTP interface with format inference. CH is
-# lenient about extra fields; we just pass through the raw rows and let CH
-# map them to the schema. Missing fields default to 0/empty string.
+# IMPORTANT: do NOT use `curl --data-binary @-` for this. curl buffers the
+# full stdin into memory before POSTing, which OOMs on 30+ GB of NDJSON.
+# clickhouse-client streams stdin block-by-block, sending blocks of
+# max_insert_block_size rows without buffering the whole input.
 
 phase_start "ingest-reviews"
 gunzip -c Home_and_Kitchen.jsonl.gz | \
-  curl -sf -X POST \
-    --data-binary @- \
-    -H 'Content-Type: application/x-ndjson' \
-    "$CH_URL/?query=INSERT%20INTO%20fed.reviews%20FORMAT%20JSONEachRow&input_format_skip_unknown_fields=1"
+  sudo docker exec -i ch clickhouse-client \
+    --query "INSERT INTO fed.reviews FORMAT JSONEachRow" \
+    --input_format_skip_unknown_fields 1 \
+    --max_insert_block_size 1000000
 phase_end   "ingest-reviews"
 
 # ------------------------------------------------------------
