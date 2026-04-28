@@ -31,7 +31,21 @@
     .reveal h1 { font-size: 1.9em; }
     .reveal h2 { font-size: 1.35em; margin-bottom: 0.4em; }
     .reveal h3 { font-size: 1.05em; color: var(--muted); }
-    .reveal section { text-align: left; font-size: 0.9em; }
+    /* Every slide is a vertical flex container so its content lands in
+       the middle of the 1280x800 canvas by default. Slides whose content
+       is long enough to fill the canvas naturally (results table,
+       appendix plan) can opt out with class="top-aligned". */
+    .reveal section {
+      text-align: left;
+      font-size: 0.9em;
+      display: flex !important;
+      flex-direction: column;
+      justify-content: center;
+      height: 100%;
+    }
+    .reveal section.top-aligned {
+      justify-content: flex-start;
+    }
     .reveal .title-slide { text-align: center; }
     .reveal p { margin: 0.35em 0; }
     .reveal li { margin: 0.1em 0; }
@@ -509,7 +523,7 @@
     </section>
 
     <!-- ============ SLIDE 6: RESULTS TABLE ============ -->
-    <section>
+    <section class="top-aligned">
       <div class="kicker">Results — each path uses each engine where it excels</div>
       <h2 style="font-size: 1.15em; margin-bottom: 0.3em;">
         All measured on 67 M row fact table
@@ -804,7 +818,7 @@
     </section>
 
     <!-- ============ APPENDIX: EXPLAIN OUTPUT FOR ENGINEERS ============ -->
-    <section class="appendix-slide">
+    <section class="appendix-slide top-aligned">
       <div class="kicker">Appendix · for the technically curious</div>
       <h2 style="font-size: 1.05em; margin-bottom: 0.15em;">
         Path C physical plan — IN-list pushdown with CH-side aggregate
