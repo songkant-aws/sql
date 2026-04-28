@@ -538,6 +538,90 @@ public class ClickHouseFederationIT extends ClickHouseITBase {
   }
 
   // ---------------------------------------------------------------------------
+  // IN-list pushed *through* a right-side aggregate: the right sub-search has both
+  // a user `where` predicate and a `stats ... by key` on the CH side, which Calcite
+  // lowers to a JdbcAggregate on top of a JdbcFilter on top of a JdbcTableScan.
+  // SideInputInListRule wraps the scan at the bottom of the subtree, so the final
+  // CH SQL applies IN-list before GROUP BY — reducing the aggregation input to rows
+  // whose key is in the bounded-left key set. Pins that this shape still fires (and
+  // correctly binds keys) rather than silently no-op'ing.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void testInListPushesThroughRightAggregate() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", chUser());
+    p.setProperty("password", chPassword());
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      truncateChQueryLog(c);
+    }
+
+    // Right sub-search: filter + stats (aggregate) by join key. The `where v > 0` forces
+    // a JdbcFilter to sit between the aggregate and the scan, so the rule must insert
+    // JdbcSideInputFilter below *both*, at the scan — which is exactly where the CH SQL
+    // renders it as a predicate in the WHERE clause, before GROUP BY.
+    String ppl =
+        "source="
+            + OS_INDEX
+            + " | head 10"
+            + " | inner join left=d right=f on d.user_id = f.user_id"
+            + " [ source="
+            + DS_NAME
+            + "."
+            + CH_DATABASE
+            + "."
+            + CH_TABLE
+            + " | where v > 0"
+            + " | stats avg(v) as avg_v, count() as n by user_id ]";
+    JSONObject j = executeQuery(ppl);
+
+    // (1) Correctness: each seeded user must show up exactly once.
+    JSONArray rows = j.getJSONArray("datarows");
+    assertThat(
+        "right-agg join must emit at least one row per seeded user (3)",
+        rows.length(),
+        greaterThanOrEqualTo(3));
+    int userIdCol = findUserIdColumn(j);
+    Set<Integer> observedUserIds = new HashSet<>();
+    for (int i = 0; i < rows.length(); i++) {
+      observedUserIds.add(rows.getJSONArray(i).getInt(userIdCol));
+    }
+    assertTrue("user_id=1 must be present. Got: " + observedUserIds, observedUserIds.contains(1));
+    assertTrue("user_id=3 must be present. Got: " + observedUserIds, observedUserIds.contains(3));
+    assertTrue("user_id=5 must be present. Got: " + observedUserIds, observedUserIds.contains(5));
+
+    // (2) CH SQL shape: IN-list must appear in the WHERE clause (so CH applies it before
+    // GROUP BY). Assert both `IN` and `GROUP BY` land in the same query, and that the
+    // IN clause textually precedes GROUP BY — otherwise the optimization we're pinning
+    // (prune rows before aggregating) isn't actually happening.
+    List<String> observed;
+    try (Connection c = new com.clickhouse.jdbc.ClickHouseDriver().connect(chJdbcUrl(), p)) {
+      observed = readChQueryLogForFedEvents(c);
+    }
+    String dump = dumpObservedSql("CH query_log (IN-list through agg pushdown)", observed);
+    String inListSql = findInListSql(observed);
+    assertThat(
+        "CH SQL must land both IN-list pushdown AND GROUP BY in the same query\n" + dump,
+        inListSql,
+        containsString("GROUP BY"));
+    int inPos = inListSql.indexOf("IN (");
+    int groupByPos = inListSql.indexOf("GROUP BY");
+    assertTrue(
+        "IN-list must appear before GROUP BY so CH prunes input to the aggregation\n"
+            + "  inPos="
+            + inPos
+            + ", groupByPos="
+            + groupByPos
+            + "\n"
+            + dump,
+        inPos >= 0 && groupByPos >= 0 && inPos < groupByPos);
+    assertThat(
+        "IN-list pushdown must bind the real distinct keys {1,3,5}\n" + dump,
+        hasParametricInFormWithDistinctKeys(inListSql, Set.of(1, 3, 5)),
+        equalTo(true));
+  }
+
+  // ---------------------------------------------------------------------------
   // Empty-left: seed an empty OS index and join it against an aggregated CH side.
   // The runtime drain yields zero keys, which short-circuits the right-side
   // sub-search to an empty IN-list — the final join result must be empty. This
