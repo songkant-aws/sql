@@ -180,8 +180,8 @@ decision.
 
 # Possible next steps
 
-- Find a **customer design partner** — PPL user with > 50 M fact rows
-  they'd rather not keep in OS. Retail and observability both fit.
+- **Engage a design partner** — ideally a retail or observability
+  customer with fact data already outside OS.
 - Start with **ClickHouse as the reference first datasource** —
   additional JDBC targets plug into the same rule framework
   incrementally.
