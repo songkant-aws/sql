@@ -29,7 +29,16 @@ CH_USER="${CH_USER:-default}"
 # Default password matches machine-b-bootstrap.sh's users.xml. Override
 # via CH_PASSWORD env var if you changed it.
 CH_PASSWORD="${CH_PASSWORD:-demopass}"
-CH_URL="http://$CH_PRIVATE_IP:8123"
+# CH is reachable via two URL shapes:
+#   CH_HTTP_URL — plain HTTP for curl probes and schema introspection
+#   CH_JDBC_URL — what the opensearch-sql CLICKHOUSE connector expects;
+#                 the JDBC driver rejects bare http:// URLs with
+#                 "Driver ... claims to not accept jdbcUrl".
+CH_HTTP_URL="http://$CH_PRIVATE_IP:8123"
+CH_JDBC_URL="jdbc:clickhouse://$CH_PRIVATE_IP:8123"
+# Backward-compatible alias for existing references; still points at HTTP
+# since the local curl usage predates the JDBC split.
+CH_URL="$CH_HTTP_URL"
 
 log() { printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -136,7 +145,7 @@ log "Registering datasource '$DS_NAME' → $CH_URL ..."
 # clickhouse.schema must be a string (not a nested object) per the plugin's
 # expected shape — hence reading /tmp/schema.json as raw text.
 DS_NAME_ENV="$DS_NAME" \
-CH_URL_ENV="$CH_URL" \
+CH_URL_ENV="$CH_JDBC_URL" \
 CH_USER_ENV="$CH_USER" \
 CH_PASSWORD_ENV="$CH_PASSWORD" \
 python3 > /tmp/ds-body.json <<'PYEOF'
