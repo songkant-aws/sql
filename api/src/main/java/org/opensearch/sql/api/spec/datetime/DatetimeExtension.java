@@ -22,7 +22,16 @@ public class DatetimeExtension implements LanguageExtension {
 
   @Override
   public List<RelShuttle> postAnalysisRules() {
-    return List.of(DatetimeUdtNormalizeRule.INSTANCE, DatetimeOutputCastRule.INSTANCE);
+    // UdtNormalize and EarliestLatestFold operate on disjoint RexCall subsets —
+    // the former on calls whose return type is a datetime UDT, the latter on
+    // EARLIEST/LATEST calls whose return type is BOOLEAN — so their relative
+    // order does not affect the result. OutputCast is last by convention: it
+    // wraps the root projection in CAST AS VARCHAR, so semantic rewrites run
+    // first and the wire-format cast wraps whatever they produced.
+    return List.of(
+        DatetimeUdtNormalizeRule.INSTANCE,
+        EarliestLatestFoldRule.INSTANCE,
+        DatetimeOutputCastRule.INSTANCE);
   }
 
   /** Maps datetime UDT types to their standard Calcite equivalents. */
