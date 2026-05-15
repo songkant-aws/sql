@@ -97,6 +97,52 @@ public class EarliestLatestFoldRuleTest extends UnifiedQueryTestBase {
     assertNoEarliestUdfRemains(tree);
   }
 
+  /**
+   * Pure-offset DSL (no snap, no absolute) emits {@code now() + INTERVAL} so the
+   * backend folds at its own plan time, keeping all migrated datetime functions
+   * coherent on the same "now". RHS shape is symbolic, not a TIMESTAMP literal.
+   */
+  @Test
+  public void testEarliestWithPureOffsetEmitsNowSymbolic() {
+    RelNode plan = givenQuery("source = catalog.events | where earliest('-7d', ts)").plan();
+    String tree = RelOptUtil.toString(plan);
+    assertTrue("expected `>=` predicate, got:\n" + tree, tree.contains(">=($2,"));
+    assertTrue(
+        "expected RHS to be symbolic now() + INTERVAL, got:\n" + tree,
+        tree.contains("now()") && tree.contains("INTERVAL"));
+    assertFalse(
+        "RHS should not be a pre-resolved TIMESTAMP literal, got:\n" + tree,
+        tree.matches("(?s).*>=\\(\\$2, \\d{4}-\\d{2}-\\d{2}.*"));
+    assertNoEarliestUdfRemains(tree);
+  }
+
+  /**
+   * Snap DSL keeps the JVM-resolved literal shape because there's no clean substrait
+   * primitive for snap-to-day across backends.
+   */
+  @Test
+  public void testEarliestWithSnapKeepsLiteralShape() {
+    RelNode plan = givenQuery("source = catalog.events | where earliest('@d', ts)").plan();
+    String tree = RelOptUtil.toString(plan);
+    assertFalse(
+        "snap form must NOT use symbolic now(), got:\n" + tree,
+        tree.contains("now()"));
+  }
+
+  /**
+   * Absolute literal DSL keeps the JVM-resolved shape — there's no "now" involved
+   * to defer to the backend.
+   */
+  @Test
+  public void testEarliestWithAbsoluteLiteralKeepsLiteralShape() {
+    RelNode plan =
+        givenQuery("source = catalog.events | where earliest('2024-01-15 00:00:00', ts)").plan();
+    String tree = RelOptUtil.toString(plan);
+    assertFalse(
+        "absolute form must NOT use symbolic now(), got:\n" + tree,
+        tree.contains("now()"));
+  }
+
   @Test
   public void testEarliestWithMixedOffsetAndSnapFolds() {
     RelNode plan = givenQuery("source = catalog.events | where earliest('-1h@d', ts)").plan();

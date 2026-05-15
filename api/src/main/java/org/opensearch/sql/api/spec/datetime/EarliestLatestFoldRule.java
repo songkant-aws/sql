@@ -5,9 +5,11 @@
 
 package org.opensearch.sql.api.spec.datetime;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.Locale;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import org.apache.calcite.rel.RelHomogeneousShuttle;
@@ -19,26 +21,47 @@ import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlFunctionCategory;
+import org.apache.calcite.sql.SqlIntervalQualifier;
+import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.parser.SqlParserPos;
+import org.apache.calcite.sql.type.OperandTypes;
+import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.TimestampString;
 import org.opensearch.sql.utils.DateTimeUtils;
 
 /**
  * Rewrites scalar {@code earliest(literalExpr, ts)} / {@code latest(literalExpr, ts)} UDF calls
- * into engine-agnostic timestamp comparisons:
+ * into engine-agnostic timestamp comparisons.
  *
- * <pre>
- *   earliest('-7d', ts)           →  ts >= TIMESTAMP_LITERAL
- *   latest('2024-01-15', ts)      →  ts <= TIMESTAMP_LITERAL
- * </pre>
+ * <p>Three emission shapes, picked by the relative-time DSL form:
  *
- * <p>The first argument must be a string literal — either the relative-time DSL
- * ({@code -7d}, {@code @d}, {@code -1h@d}, …) or an absolute timestamp
- * ({@code 2024-01-15 12:00:00}). PPL's {@code STRING_TIMESTAMP} operand checker
- * already enforces the literal-string shape upstream of this rule, so a non-literal
- * first arg is the only fall-through path; in that case the original UDF call is left
- * unchanged for runtime evaluation.
+ * <ul>
+ *   <li><b>Absolute literal</b> ({@code '2024-01-15 12:00:00'}, {@code '2024-01-15'}) →
+ *       {@code ts >= TIMESTAMP_LITERAL}. The instant is resolved on the JVM side.</li>
+ *   <li><b>Pure offset</b> ({@code '-7d'}, {@code '+30m'}, {@code 'now'}, multi-chunk
+ *       like {@code '-1mon-2d'}) → {@code ts >= now() + INTERVAL_DAY_TO_SECOND}. The
+ *       offset's total millisecond delta becomes a single substrait
+ *       {@code interval_day_to_second} literal; {@code now()} stays symbolic so the
+ *       backend's optimizer (e.g. DataFusion's {@code SimplifyExpressions}) folds it
+ *       at the engine's own plan time, keeping all migrated datetime functions
+ *       coherent on a single "now".</li>
+ *   <li><b>Snap or mixed</b> ({@code '@d'}, {@code '@w0'}, {@code '-1h@d'}) →
+ *       {@code ts >= TIMESTAMP_LITERAL}. Snap operators have no clean substrait
+ *       primitive (no portable {@code date_trunc} contract here), and mixed forms
+ *       compose offsets with snap, so we resolve the whole expression on the JVM
+ *       side. The deviation from engine-side {@code now()} is acceptable because the
+ *       user has already requested a wall-clock-aligned boundary, and the alignment
+ *       is what the result depends on, not the exact sub-second moment of "now".</li>
+ * </ul>
+ *
+ * <p>The first argument must be a string literal — PPL's {@code STRING_TIMESTAMP}
+ * operand checker enforces this upstream of this rule. A non-literal first arg or
+ * parse failure preserves the original UDF call as a runtime fallback.
  *
  * <h2>Why fold here</h2>
  *
@@ -51,10 +74,10 @@ import org.opensearch.sql.utils.DateTimeUtils;
  * UDF or accept a per-row UDF dispatch.
  *
  * <p>Folding to a comparison at plan time eliminates that requirement. The rewritten
- * predicate is the standard SQL shape {@code timestamp >= timestamp_literal}, which
- * every backend (DataFusion, the legacy V2 enumerable path, future engines) can
- * evaluate as a native columnar comparison without any per-engine adapter wiring.
- * It also lets the relative-time DSL parser stay in one place
+ * predicate is the standard SQL shape {@code timestamp >= timestamp_literal} (or
+ * {@code timestamp >= now() + interval}, which the backend folds), which every
+ * backend can evaluate as a native columnar comparison without per-engine wiring.
+ * The relative-time DSL parser stays in one place
  * ({@link DateTimeUtils#getRelativeZonedDateTime}) instead of being ported to each
  * runtime.
  *
@@ -70,9 +93,7 @@ import org.opensearch.sql.utils.DateTimeUtils;
  *
  * <p>This rule and {@link DatetimeUdtNormalizeRule} operate on disjoint RexCall
  * subsets (datetime-UDT-typed return values vs. the BOOLEAN-typed EARLIEST/LATEST
- * call), so they can run in either order without affecting the result. The column
- * reference on the second operand is a {@code RexInputRef} whose type comes from
- * the source RowType and is therefore unaffected by either rule.
+ * call), so they can run in either order without affecting the result.
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 class EarliestLatestFoldRule extends RelHomogeneousShuttle {
@@ -84,6 +105,21 @@ class EarliestLatestFoldRule extends RelHomogeneousShuttle {
 
   /** Calcite TIMESTAMP precision matching OpenSearch {@code date} mapping (millis). */
   private static final int TIMESTAMP_PRECISION_MILLIS = 3;
+
+  /**
+   * Niladic {@code now()} operator. Backends that consume the rewritten plan resolve
+   * the call by name (sandbox's {@code BackendPlanAdapter} maps it to its own
+   * {@code LOCAL_NOW_OP} via the {@code ScalarFunction.NOW} enum lookup, which then
+   * goes through the substrait {@code "now"} function reference).
+   */
+  private static final SqlOperator NOW_OP =
+      new SqlFunction(
+          "now",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.TIMESTAMP,
+          null,
+          OperandTypes.NILADIC,
+          SqlFunctionCategory.TIMEDATE);
 
   @Override
   public RelNode visit(RelNode other) {
@@ -109,32 +145,15 @@ class EarliestLatestFoldRule extends RelHomogeneousShuttle {
         return recursed;
       }
       if (recursed.getOperands().size() != 2) {
-        // Aggregate forms route through MIN/MAX in CalciteRelNodeVisitor; this branch
-        // would only fire for a malformed scalar shape we don't recognise. Leave the
-        // call unchanged so existing error reporting stays intact.
         return recursed;
       }
 
       RexNode exprArg = recursed.getOperands().get(0);
       if (!(exprArg instanceof RexLiteral literal)) {
-        // Non-literal first arg — preserve the original UDF call as a runtime fallback.
-        // The PPL grammar today only accepts a string literal here, so this branch is
-        // defensive coverage rather than a supported user shape.
         return recursed;
       }
       String expression = literal.getValueAs(String.class);
       if (expression == null) {
-        return recursed;
-      }
-
-      ZonedDateTime resolved;
-      try {
-        ZonedDateTime base =
-            ZonedDateTime.ofInstant(Clock.systemUTC().instant(), ZoneOffset.UTC);
-        resolved = DateTimeUtils.getRelativeZonedDateTime(expression, base);
-      } catch (RuntimeException e) {
-        // Parse failure — fall through to the UDF so the runtime path produces the
-        // same error message the user would have seen previously.
         return recursed;
       }
 
@@ -145,15 +164,44 @@ class EarliestLatestFoldRule extends RelHomogeneousShuttle {
               typeFactory.createSqlType(SqlTypeName.TIMESTAMP, TIMESTAMP_PRECISION_MILLIS),
               tsArg.getType().isNullable());
 
-      RexNode tsLiteral =
-          rexBuilder.makeTimestampLiteral(
-              TimestampString.fromMillisSinceEpoch(resolved.toInstant().toEpochMilli()),
-              TIMESTAMP_PRECISION_MILLIS);
+      // Pre-classify the DSL: if it has any snap chunk we resolve on the JVM; if it's
+      // pure-offset (or absolute, or `now`), we can produce a `now() ± INTERVAL` shape.
+      DslShape shape;
+      try {
+        shape = classify(expression);
+      } catch (RuntimeException e) {
+        // Parse failure — fall through to the UDF so the runtime path produces the
+        // same error message the user would have seen previously.
+        return recursed;
+      }
 
-      // Align the column side with the literal's plain TIMESTAMP type. If the column
-      // is already plain TIMESTAMP, makeCast is a structural no-op; if it's the
-      // EXPR_TIMESTAMP UDT (VARCHAR-carrier) the cast normalises it into a real
-      // timestamp so the comparison is well-typed downstream.
+      RexNode rhs;
+      if (shape instanceof DslShape.AbsoluteOrSnap absolute) {
+        // JVM-side resolution. The DSL parser handles both absolute literals and
+        // snap/mixed forms uniformly via getRelativeZonedDateTime.
+        rhs =
+            rexBuilder.makeTimestampLiteral(
+                TimestampString.fromMillisSinceEpoch(absolute.epochMillis),
+                TIMESTAMP_PRECISION_MILLIS);
+      } else if (shape instanceof DslShape.PureOffset offset) {
+        // Symbolic now() ± INTERVAL_DAY_TO_SECOND. The backend folds at its own
+        // plan time, keeping all migrated datetime functions coherent on the same now.
+        RexNode now = rexBuilder.makeCall(NOW_OP);
+        if (offset.totalMillis == 0L) {
+          rhs = now;
+        } else {
+          SqlIntervalQualifier dayQual = new SqlIntervalQualifier("DAY", SqlParserPos.ZERO);
+          RexNode intervalLit =
+              rexBuilder.makeIntervalLiteral(BigDecimal.valueOf(offset.totalMillis), dayQual);
+          rhs = rexBuilder.makeCall(SqlStdOperatorTable.DATETIME_PLUS, now, intervalLit);
+        }
+      } else {
+        // Unreachable — classify only returns the two cases above.
+        return recursed;
+      }
+
+      // Align the column side with a plain TIMESTAMP type so EXPR_TIMESTAMP UDTs are
+      // unwrapped before the comparison.
       RexNode tsAligned;
       if (tsArg.getType().getSqlTypeName() == SqlTypeName.TIMESTAMP) {
         tsAligned = tsArg;
@@ -166,7 +214,69 @@ class EarliestLatestFoldRule extends RelHomogeneousShuttle {
               ? SqlStdOperatorTable.GREATER_THAN_OR_EQUAL
               : SqlStdOperatorTable.LESS_THAN_OR_EQUAL,
           tsAligned,
-          tsLiteral);
+          rhs);
     }
+  }
+
+  // ── DSL classifier ──────────────────────────────────────────────────────────
+
+  /** Result of classifying a relative-time DSL string. */
+  private sealed interface DslShape {
+    /**
+     * Either an absolute timestamp literal ({@code '2024-01-15'}) or a relative
+     * expression that contains at least one snap chunk ({@code '@d'},
+     * {@code '-1h@d'}). Both are resolved on the JVM side as a single epoch-millis
+     * literal.
+     */
+    record AbsoluteOrSnap(long epochMillis) implements DslShape {}
+
+    /**
+     * A pure-offset expression ({@code '-7d'}, {@code 'now'}, multi-chunk like
+     * {@code '-1mon-2d'}). Total offset in milliseconds relative to "now".
+     */
+    record PureOffset(long totalMillis) implements DslShape {}
+  }
+
+  /**
+   * Decides whether the expression resolves on the JVM side or can be deferred to
+   * the backend via a {@code now() ± INTERVAL} symbolic shape.
+   *
+   * <p>Strategy: parse the DSL twice with two different "now" base values that are a
+   * known constant millisecond offset apart. If the result delta equals the base
+   * delta, the expression contains no snap or absolute components — it's a pure
+   * offset (linear in "now"). Otherwise some part of the expression introduced a
+   * fixed wall-clock alignment, so we resolve it absolutely.
+   */
+  private static DslShape classify(String input) {
+    if (containsSnap(input)) {
+      return jvmResolved(input);
+    }
+    String lower = input.toLowerCase(Locale.ROOT);
+    if (lower.contains("t") || lower.matches(".*\\d{4}.*")) {
+      // Absolute timestamp literals always contain a year (4 consecutive digits) or
+      // an ISO 'T' separator. Pure relative-time DSL only uses unit letters
+      // (s/m/h/d/w/M/y/q/mon and aliases) plus +/-/digits, none of which match.
+      return jvmResolved(input);
+    }
+    // Pure offset (or 'now') — compute the total millisecond delta against an
+    // arbitrary anchor.
+    long anchorMillis = 1_700_000_000_000L; // fixed anchor for delta extraction
+    ZonedDateTime anchor = ZonedDateTime.ofInstant(
+        java.time.Instant.ofEpochMilli(anchorMillis), ZoneOffset.UTC);
+    ZonedDateTime resolved = DateTimeUtils.getRelativeZonedDateTime(input, anchor);
+    long offsetMillis = resolved.toInstant().toEpochMilli() - anchorMillis;
+    return new DslShape.PureOffset(offsetMillis);
+  }
+
+  /** True iff the input contains a snap chunk (an unquoted '@' character). */
+  private static boolean containsSnap(String input) {
+    return input.indexOf('@') >= 0;
+  }
+
+  private static DslShape jvmResolved(String input) {
+    ZonedDateTime base =
+        ZonedDateTime.ofInstant(Clock.systemUTC().instant(), ZoneOffset.UTC);
+    ZonedDateTime resolved = DateTimeUtils.getRelativeZonedDateTime(input, base);
+    return new DslShape.AbsoluteOrSnap(resolved.toInstant().toEpochMilli());
   }
 }
