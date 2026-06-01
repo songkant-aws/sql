@@ -69,6 +69,10 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexVisitorImpl;
+import org.apache.calcite.rex.RexFieldCollation;
+import org.apache.calcite.rex.RexOver;
+import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.rex.RexWindow;
 import org.apache.calcite.rex.RexWindowBound;
 import org.apache.calcite.rex.RexWindowBounds;
 import org.apache.calcite.sql.SqlKind;
@@ -2234,12 +2238,16 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
 
     // CASE: global=true + window>0 + has group
     if (node.isGlobal() && hasWindow && hasGroup) {
-      // 1. Add global sequence column for sliding window
+      // 1. Add global sequence column for sliding window. Anchor it to the upstream collation (an
+      //    explicit `| sort`) so the ordinals are deterministic — the self-join below matches rows
+      //    by seq range, so a non-deterministic seq (bare ROW_NUMBER() OVER () on a parallel
+      //    backend) would join the wrong rows. No upstream order ⇒ arrival order, per Splunk.
       RexNode streamSeq =
           context
               .relBuilder
               .aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
               .over()
+              .orderBy(deriveCollationOrderKeys(context))
               .rowsTo(seqUpperBound)
               .as(seqCol);
       context.relBuilder.projectPlus(streamSeq);
@@ -2256,48 +2264,106 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
           new String[] {seqCol});
     }
 
-    // Default: first get rawExpr
+    // Default (non-reset, non global+window+group) path.
+    //
+    // Materialize the input-order sequence FIRST, then build the window aggregates ORDER BY it.
+    // streamstats is order-sensitive: it processes events in input (pipeline) order. The running
+    // / sliding aggregate must therefore see rows in a deterministic order. Without an explicit
+    // ORDER BY, an `<agg>() OVER (PARTITION BY ... ROWS ...)` window has no defined row order, so
+    // a parallel backend (DataFusion) can frame the wrong rows (e.g. window=2 averaging the wrong
+    // neighbour). Ordering every streamstats window by the sequence column pins input order, which
+    // both fixes that non-determinism and is the correct streamstats semantics. The sequence is
+    // also used to restore the original row order after the (re-partitioning) windows and is then
+    // dropped. Done for the no-`by` case too — DataFusion still reorders an unpartitioned window.
+    //
+    // The sequence itself must be deterministic: when the pipeline carries an explicit order (an
+    // upstream `| sort key`), the sequence ROW_NUMBER orders by that collation so the captured
+    // ordinals follow it (same discipline dedup/rare/top use via deriveCollationOrderKeys). With no
+    // upstream order, streamstats has no defined event order; ROW_NUMBER() OVER () then numbers rows
+    // in arrival order (a single coordinator gather today), matching Splunk's "as received".
+    List<RexNode> seqOrderKeys = deriveCollationOrderKeys(context);
+    RexNode streamSeq =
+        context
+            .relBuilder
+            .aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
+            .over()
+            .orderBy(seqOrderKeys)
+            .rowsTo(seqUpperBound)
+            .as(seqCol);
+    context.relBuilder.projectPlus(streamSeq);
+    int seqColIndex = context.relBuilder.peek().getRowType().getFieldCount() - 1;
+
+    // Build the window aggregates against the input (incl. the new seq column), then add
+    // `ORDER BY seqCol` to each so the frame walks rows in input order.
     List<RexNode> overExpressions =
-        node.getWindowFunctionList().stream().map(w -> rexVisitor.analyze(w, context)).toList();
+        node.getWindowFunctionList().stream()
+            .map(w -> rexVisitor.analyze(w, context))
+            .map(rex -> addStreamSeqOrder(rex, seqColIndex, context))
+            .toList();
 
-    if (hasGroup) {
-      // only build sequence when there is by condition
-      RexNode streamSeq =
-          context
-              .relBuilder
-              .aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
-              .over()
-              .rowsTo(seqUpperBound)
-              .as(seqCol);
-      context.relBuilder.projectPlus(streamSeq);
+    if (hasGroup && !node.isBucketNullable()) {
+      // construct groupNotNull predicate
+      List<RexNode> groupByList =
+          groupList.stream().map(expr -> rexVisitor.analyze(expr, context)).toList();
+      List<RexNode> notNullList =
+          PlanUtils.getSelectColumns(groupByList).stream()
+              .map(context.relBuilder::field)
+              .map(context.relBuilder::isNotNull)
+              .toList();
+      RexNode groupNotNull = context.relBuilder.and(notNullList);
 
-      if (!node.isBucketNullable()) {
-        // construct groupNotNull predicate
-        List<RexNode> groupByList =
-            groupList.stream().map(expr -> rexVisitor.analyze(expr, context)).toList();
-        List<RexNode> notNullList =
-            PlanUtils.getSelectColumns(groupByList).stream()
-                .map(context.relBuilder::field)
-                .map(context.relBuilder::isNotNull)
-                .toList();
-        RexNode groupNotNull = context.relBuilder.and(notNullList);
-
-        // wrap each expr: CASE WHEN groupNotNull THEN rawExpr ELSE CAST(NULL AS rawType) END
-        List<RexNode> wrappedOverExprs =
-            wrapWindowFunctionsWithGroupNotNull(overExpressions, groupNotNull, context);
-        context.relBuilder.projectPlus(wrappedOverExprs);
-      } else {
-        context.relBuilder.projectPlus(overExpressions);
-      }
-
-      // resort when there is by condition
-      context.relBuilder.sort(context.relBuilder.field(seqCol));
-      context.relBuilder.projectExcept(context.relBuilder.field(seqCol));
+      // wrap each expr: CASE WHEN groupNotNull THEN rawExpr ELSE CAST(NULL AS rawType) END
+      List<RexNode> wrappedOverExprs =
+          wrapWindowFunctionsWithGroupNotNull(overExpressions, groupNotNull, context);
+      context.relBuilder.projectPlus(wrappedOverExprs);
     } else {
       context.relBuilder.projectPlus(overExpressions);
     }
 
+    // Restore original input order, then drop the helper sequence column.
+    context.relBuilder.sort(context.relBuilder.field(seqCol));
+    context.relBuilder.projectExcept(context.relBuilder.field(seqCol));
+
     return context.relBuilder.peek();
+  }
+
+  /**
+   * Adds {@code ORDER BY seqColIndex ASC} to every {@link RexOver} inside a streamstats window
+   * expression so each frame walks rows in the materialized input-sequence order. Recurses through
+   * the expression tree because some aggregates lower to composite forms — e.g. {@code AVG} becomes
+   * {@code SUM() OVER (...) / COUNT() OVER (...)} and variance/stddev nest several RexOvers inside
+   * arithmetic — so the RexOvers are not always at the top level. RexOvers that already carry an
+   * explicit order are left unchanged.
+   */
+  private RexNode addStreamSeqOrder(RexNode rex, int seqColIndex, CalcitePlanContext context) {
+    RexInputRef seqRef = context.relBuilder.field(seqColIndex);
+    return rex.accept(
+        new RexShuttle() {
+          @Override
+          public RexNode visitOver(RexOver over) {
+            // Recurse into operands first (handles nested RexOver inside arithmetic).
+            RexOver recursed = (RexOver) super.visitOver(over);
+            RexWindow window = recursed.getWindow();
+            if (!window.orderKeys.isEmpty()) {
+              return recursed;
+            }
+            RexFieldCollation seqOrder = new RexFieldCollation(seqRef, java.util.Set.of());
+            return (RexOver)
+                context.rexBuilder.makeOver(
+                    recursed.getType(),
+                    recursed.getAggOperator(),
+                    recursed.getOperands(),
+                    window.partitionKeys,
+                    com.google.common.collect.ImmutableList.of(seqOrder),
+                    window.getLowerBound(),
+                    window.getUpperBound(),
+                    window.isRows(),
+                    true,
+                    false,
+                    recursed.isDistinct(),
+                    recursed.ignoreNulls());
+          }
+        });
   }
 
   private List<RexNode> wrapWindowFunctionsWithGroupNotNull(
