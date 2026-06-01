@@ -69,6 +69,7 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexVisitorImpl;
+import org.apache.calcite.rex.RexWindowBound;
 import org.apache.calcite.rex.RexWindowBounds;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.fun.SqlLibraryOperators;
@@ -919,11 +920,20 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     RelDataType axisLiteralType =
         rx.getTypeFactory().createSqlType(SqlTypeName.CHAR, axisLiteralLength);
 
-    // Step 1: ROW_NUMBER
+    // Step 1: ROW_NUMBER. Like streamstats, this is a bare `ROW_NUMBER() OVER ()` row-ordinal
+    // helper. Backends that derive a window column's name from its spec (DataFusion) would clash
+    // if another such helper (a chained transpose, or a streamstats in the same query) shares the
+    // identical spec. Give it a per-occurrence frame upper bound so the derived name is unique;
+    // ROW_NUMBER's value is the row ordinal and is frame-independent, so this never changes output.
+    int transposeSeqId = context.nextStreamSeqId();
+    RexWindowBound transposeUpperBound =
+        transposeSeqId == 0
+            ? RexWindowBounds.CURRENT_ROW
+            : RexWindowBounds.following(b.literal(transposeSeqId));
     b.projectPlus(
         b.aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
             .over()
-            .rowsTo(RexWindowBounds.CURRENT_ROW)
+            .rowsTo(transposeUpperBound)
             .as(PlanUtils.ROW_NUMBER_COLUMN_FOR_TRANSPOSE));
 
     // Step 2: UNPIVOT
@@ -2175,6 +2185,27 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     boolean hasWindow = node.getWindow() > 0;
     boolean hasReset = node.getResetBefore() != null || node.getResetAfter() != null;
 
+    // Order-restoration sequence helper. Each `streamstats ... by` adds a `ROW_NUMBER() OVER ()`
+    // to capture input order, sorts by it, then drops it. Chained occurrences produce two helpers
+    // with the identical (empty) window spec; some backends (e.g. DataFusion) derive a window
+    // column's name purely from its spec — `row_number() ROWS BETWEEN UNBOUNDED PRECEDING AND
+    // CURRENT ROW` — and reject the resulting duplicate unqualified field name in one schema.
+    //
+    // Disambiguate per occurrence on TWO axes: (1) a unique Calcite column name, and (2) a unique
+    // window frame upper bound. ROW_NUMBER is a ranking function whose result is the row's ordinal
+    // and is independent of the frame (verified: DataFusion's row_number evaluator emits 1..N and
+    // ignores the frame entirely), so widening the frame to `N FOLLOWING` per occurrence changes
+    // only the derived name, never the values. Axis (2) is what actually separates the backend
+    // schema names; axis (1) keeps the Calcite plan readable.
+    final int seqId = context.nextStreamSeqId();
+    final String seqCol = ROW_NUMBER_COLUMN_FOR_STREAMSTATS + seqId + "__";
+    // Upper bound: occurrence 0 keeps CURRENT ROW; later occurrences use `seqId FOLLOWING` so each
+    // chained helper has a distinct frame string and thus a distinct backend-derived column name.
+    final RexWindowBound seqUpperBound =
+        seqId == 0
+            ? RexWindowBounds.CURRENT_ROW
+            : RexWindowBounds.following(context.relBuilder.literal(seqId));
+
     // Local helper column names
     final String RESET_BEFORE_FLAG_COL = "__reset_before_flag__"; // flag for reset_before
     final String RESET_AFTER_FLAG_COL = "__reset_after_flag__"; // flag for reset_after
@@ -2183,7 +2214,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     // CASE: reset
     if (hasReset) {
       // 1. Build helper columns: seq, before/after flags, segment_id
-      RelNode leftWithSeg = buildResetHelperColumns(context, node);
+      RelNode leftWithSeg = buildResetHelperColumns(context, node, seqCol, seqUpperBound);
 
       // 2. Run correlate + aggregate with reset-specific filter and cleanup
       return buildStreamWindowJoinPlan(
@@ -2191,10 +2222,10 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
           leftWithSeg,
           node,
           groupList,
-          ROW_NUMBER_COLUMN_FOR_STREAMSTATS,
+          seqCol,
           SEGMENT_ID_COL,
           new String[] {
-            ROW_NUMBER_COLUMN_FOR_STREAMSTATS,
+            seqCol,
             RESET_BEFORE_FLAG_COL,
             RESET_AFTER_FLAG_COL,
             SEGMENT_ID_COL
@@ -2209,8 +2240,8 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
               .relBuilder
               .aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
               .over()
-              .rowsTo(RexWindowBounds.CURRENT_ROW)
-              .as(ROW_NUMBER_COLUMN_FOR_STREAMSTATS);
+              .rowsTo(seqUpperBound)
+              .as(seqCol);
       context.relBuilder.projectPlus(streamSeq);
       RelNode left = context.relBuilder.build();
 
@@ -2221,8 +2252,8 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
           left,
           node,
           groupList,
-          ROW_NUMBER_COLUMN_FOR_STREAMSTATS,
-          new String[] {ROW_NUMBER_COLUMN_FOR_STREAMSTATS});
+          seqCol,
+          new String[] {seqCol});
     }
 
     // Default: first get rawExpr
@@ -2236,8 +2267,8 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
               .relBuilder
               .aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
               .over()
-              .rowsTo(RexWindowBounds.CURRENT_ROW)
-              .as(ROW_NUMBER_COLUMN_FOR_STREAMSTATS);
+              .rowsTo(seqUpperBound)
+              .as(seqCol);
       context.relBuilder.projectPlus(streamSeq);
 
       if (!node.isBucketNullable()) {
@@ -2260,8 +2291,8 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
       }
 
       // resort when there is by condition
-      context.relBuilder.sort(context.relBuilder.field(ROW_NUMBER_COLUMN_FOR_STREAMSTATS));
-      context.relBuilder.projectExcept(context.relBuilder.field(ROW_NUMBER_COLUMN_FOR_STREAMSTATS));
+      context.relBuilder.sort(context.relBuilder.field(seqCol));
+      context.relBuilder.projectExcept(context.relBuilder.field(seqCol));
     } else {
       context.relBuilder.projectPlus(overExpressions);
     }
@@ -2575,15 +2606,16 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     return RIGHT_SIDE_FIELD_PREFIX + originalName + RIGHT_SIDE_FIELD_SUFFIX;
   }
 
-  private RelNode buildResetHelperColumns(CalcitePlanContext context, StreamWindow node) {
+  private RelNode buildResetHelperColumns(
+      CalcitePlanContext context, StreamWindow node, String seqCol, RexWindowBound seqUpperBound) {
     // 1. global sequence to define order
     RexNode rowNum =
         context
             .relBuilder
             .aggregateCall(SqlStdOperatorTable.ROW_NUMBER)
             .over()
-            .rowsTo(RexWindowBounds.CURRENT_ROW)
-            .as(ROW_NUMBER_COLUMN_FOR_STREAMSTATS);
+            .rowsTo(seqUpperBound)
+            .as(seqCol);
     context.relBuilder.projectPlus(rowNum);
 
     // 2. before/after flags

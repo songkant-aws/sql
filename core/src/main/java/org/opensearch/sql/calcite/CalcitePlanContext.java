@@ -81,6 +81,19 @@ public class CalcitePlanContext {
   /** Whether we're currently inside a lambda context. */
   @Getter @Setter private boolean inLambdaContext = false;
 
+  /**
+   * Monotonic counter handing out a unique suffix to the streamstats input-sequence helper column
+   * ({@code __stream_seq__}) per {@code streamstats} occurrence in a plan. Chained {@code
+   * streamstats ... by} each lower to a {@code ROW_NUMBER() OVER ()} order-restoration helper;
+   * giving each a distinct column avoids a duplicate-column-name clash in backends (e.g. DataFusion)
+   * that key their output schema on unqualified field names. Returns 0, 1, 2, ... .
+   */
+  private int streamSeqCounter = 0;
+
+  public int nextStreamSeqId() {
+    return streamSeqCounter++;
+  }
+
   private CalcitePlanContext(FrameworkConfig config, SysLimit sysLimit, QueryType queryType) {
     this.config = config;
     this.sysLimit = sysLimit;
