@@ -3841,17 +3841,22 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
   public RelNode visitTrendline(Trendline node, CalcitePlanContext context) {
     visitChildren(node, context);
 
-    node.getSortByField()
-        .ifPresent(
-            sortField -> {
-              SortOption sortOption = analyzeSortOption(sortField.getFieldArgs());
-              RexNode field = rexVisitor.analyze(sortField, context);
-              if (sortOption == DEFAULT_DESC) {
-                context.relBuilder.sort(context.relBuilder.desc(field));
-              } else {
-                context.relBuilder.sort(field);
-              }
-            });
+    // PPL `trendline sort [-]field ...` carries a single sort direction. We thread it into the
+    // OVER clause's ORDER BY so the SMA/WMA window has SQL-defined semantics regardless of the
+    // backend's sort-elimination behavior. The same field is also used as a top-level Sort so the
+    // output row order matches the user's directive.
+    List<RexNode> orderKeys =
+        node.getSortByField()
+            .map(
+                sortField -> {
+                  SortOption sortOption = analyzeSortOption(sortField.getFieldArgs());
+                  RexNode field = rexVisitor.analyze(sortField, context);
+                  RexNode key =
+                      sortOption == DEFAULT_DESC ? context.relBuilder.desc(field) : field;
+                  context.relBuilder.sort(key);
+                  return List.of(key);
+                })
+            .orElse(List.of());
 
     List<RexNode> trendlineNodes = new ArrayList<>();
     List<String> aliases = new ArrayList<>();
@@ -3874,7 +3879,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
                       null,
                       List.of(),
                       List.of(),
-                      List.of(),
+                      orderKeys,
                       windowFrame);
               // CASE WHEN count() over (ROWS (windowSize-1) PRECEDING) > windowSize - 1
               RexNode whenConditionExpr =
@@ -3895,7 +3900,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
                           field,
                           List.of(),
                           List.of(),
-                          List.of(),
+                          orderKeys,
                           windowFrame);
                   break;
                 case TrendlineType.WMA:
@@ -3904,6 +3909,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
                       buildWmaRexNode(
                           field,
                           trendlineComputation.getNumberOfDataPoints(),
+                          orderKeys,
                           windowFrame,
                           context);
                   break;
@@ -3931,6 +3937,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
   private RexNode buildWmaRexNode(
       RexNode field,
       Integer numberOfDataPoints,
+      List<RexNode> orderKeys,
       WindowFrame windowFrame,
       CalcitePlanContext context) {
 
@@ -3948,7 +3955,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
               field,
               List.of(context.relBuilder.literal(i)),
               List.of(),
-              List.of(),
+              orderKeys,
               windowFrame);
       divider =
           context.relBuilder.call(
