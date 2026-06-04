@@ -915,6 +915,9 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     RelBuilder b = context.relBuilder;
     RexBuilder rx = context.rexBuilder;
     RelDataType varchar = rx.getTypeFactory().createSqlType(SqlTypeName.VARCHAR);
+    int axisLiteralLength = fieldNames.stream().mapToInt(String::length).max().orElse(0);
+    RelDataType axisLiteralType =
+        rx.getTypeFactory().createSqlType(SqlTypeName.CHAR, axisLiteralLength);
 
     // Step 1: ROW_NUMBER
     b.projectPlus(
@@ -932,18 +935,22 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
             .map(
                 f ->
                     Map.entry(
-                        ImmutableList.of(rx.makeLiteral(f)),
+                        ImmutableList.of(
+                            (RexLiteral) rx.makeLiteral(f, axisLiteralType, false, false)),
                         ImmutableList.of((RexNode) rx.makeCast(varchar, b.field(f), true))))
             .collect(Collectors.toList()));
 
     // Step 3: Trim spaces from columnName column before pivot
 
     RexNode trimmedColumnName =
-        context.rexBuilder.makeCall(
-            SqlStdOperatorTable.TRIM,
-            context.rexBuilder.makeFlag(SqlTrimFunction.Flag.BOTH),
-            context.rexBuilder.makeLiteral(" "),
-            b.field(columnName));
+        context.rexBuilder.makeCast(
+            varchar,
+            context.rexBuilder.makeCall(
+                SqlStdOperatorTable.TRIM,
+                context.rexBuilder.makeFlag(SqlTrimFunction.Flag.BOTH),
+                context.rexBuilder.makeLiteral(" "),
+                b.field(columnName)),
+            true);
 
     // Step 4: PIVOT
     b.pivot(
@@ -3024,8 +3031,10 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
           "Union command requires at least two datasets. Provided: " + inputNodes.size());
     }
 
-    List<RelNode> unifiedInputs =
-        SchemaUnifier.buildUnifiedSchemaWithTypeCoercion(inputNodes, context);
+    List<RelNode> unifiedInputs = inputNodes;
+    if (node.isUnifySchema()) {
+      unifiedInputs = SchemaUnifier.buildUnifiedSchemaWithTypeCoercion(inputNodes, context);
+    }
 
     for (RelNode input : unifiedInputs) {
       context.relBuilder.push(input);
