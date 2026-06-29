@@ -64,6 +64,7 @@ commands
    | dedupCommand
    | sortCommand
    | evalCommand
+   | foreachCommand
    | headCommand
    | binCommand
    | rareTopCommand
@@ -115,6 +116,7 @@ commandName
    | DEDUP
    | SORT
    | EVAL
+   | FOREACH
    | FIELDFORMAT
    | HEAD
    | BIN
@@ -373,6 +375,31 @@ spanLiteral
 
 evalCommand
    : EVAL evalClause (COMMA evalClause)*
+   ;
+
+foreachCommand
+   : FOREACH foreachOption* foreachFieldPattern (COMMA? foreachFieldPattern)* LT_SQR_PRTHS foreachEvalCommand RT_SQR_PRTHS
+   ;
+
+foreachFieldPattern
+   : wcFieldExpression
+   | STAR
+   ;
+
+foreachOption
+   : ident EQUAL ident
+   ;
+
+foreachEvalCommand
+   : EVAL foreachEvalClause (COMMA foreachEvalClause)*
+   ;
+
+foreachEvalClause
+   : target = foreachEvalTarget EQUAL logicalExpression
+   ;
+
+foreachEvalTarget
+   : (foreachPlaceholder | ident | DOT | MODULE)+
    ;
 
 fieldformatCommand
@@ -942,6 +969,7 @@ valueExpression
    | literalValue                                                                                               # literalValueExpr
    | functionCall                                                                                               # functionCallExpr
    | lambda                                                                                                     # lambdaExpr
+   | foreachPlaceholder                                                                                         # foreachPlaceholderExpr
    | LT_SQR_PRTHS subSearch RT_SQR_PRTHS                                                                        # scalarSubqueryExpr
    | valueExpression NOT? IN LT_SQR_PRTHS subSearch RT_SQR_PRTHS                                                # inSubqueryExpr
    | LT_PRTHS valueExpression (COMMA valueExpression)* RT_PRTHS NOT? IN LT_SQR_PRTHS subSearch RT_SQR_PRTHS     # inSubqueryExpr
@@ -1042,6 +1070,16 @@ fieldExpression
 
 wcFieldExpression
    : wcQualifiedName
+   ;
+
+foreachPlaceholder
+   : LESS LESS foreachPlaceholderName GREATER GREATER
+   ;
+
+foreachPlaceholderName
+   : FIELD
+   | ID
+   | NUMERIC_ID
    ;
 
 selectFieldExpression

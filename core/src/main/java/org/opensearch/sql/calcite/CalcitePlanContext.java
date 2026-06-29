@@ -65,6 +65,7 @@ public class CalcitePlanContext {
   private final Stack<List<RexNode>> windowPartitions = new Stack<>();
 
   @Getter public Map<String, RexLambdaRef> rexLambdaRefMap;
+  @Getter private Map<String, String> foreachBindings = new HashMap<>();
 
   /**
    * Maps AggregateFunction AST nodes to their output field index for HAVING/post-aggregate
@@ -177,6 +178,14 @@ public class CalcitePlanContext {
    */
   public static boolean isLegacyPreferred() {
     return legacyPreferredFlag.get();
+  }
+
+  public void pushForeachBindings(Map<String, String> bindings) {
+    foreachBindings = new HashMap<>(bindings);
+  }
+
+  public void clearForeachBindings() {
+    foreachBindings.clear();
   }
 
   public void putRexLambdaRefMap(Map<String, RexLambdaRef> candidateMap) {
