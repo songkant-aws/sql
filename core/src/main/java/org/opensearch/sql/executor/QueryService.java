@@ -17,6 +17,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.RelOptUtil;
@@ -139,7 +140,8 @@ public class QueryService {
   }
 
   @Getter(lazy = true)
-  private final CalciteRelNodeVisitor relNodeVisitor = new CalciteRelNodeVisitor(dataSourceService);
+  private final CalciteRelNodeVisitor relNodeVisitor =
+      new CalciteRelNodeVisitor(dataSourceService, searchPredicateCompiler);
 
   /** Helper: depending on the type of error, either re-raise or propagate to the listener. */
   private void propagateCalciteError(Throwable t, ResponseListener<?> listener)
@@ -233,7 +235,6 @@ public class QueryService {
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
 
                   context.setHighlightConfig(highlightConfig);
-                  context.setSearchPredicateCompiler(searchPredicateCompiler);
 
                   // Wrap analyze with ANALYZING stage tracking
                   RelNode relNode =
@@ -320,7 +321,6 @@ public class QueryService {
                       CalcitePlanContext.create(
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
                   context.setHighlightConfig(highlightConfig);
-                  context.setSearchPredicateCompiler(searchPredicateCompiler);
                   context.run(
                       () -> {
                         RelNode relNode = analyze(plan, context);
