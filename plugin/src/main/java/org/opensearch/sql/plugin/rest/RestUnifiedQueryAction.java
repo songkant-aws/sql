@@ -40,13 +40,16 @@ import org.opensearch.sql.ast.tree.UnresolvedPlan;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
 import org.opensearch.sql.common.response.ResponseListener;
+import org.opensearch.sql.executor.DynamicSearchExecutor;
 import org.opensearch.sql.executor.ExecutionEngine.QueryResponse;
 import org.opensearch.sql.executor.QueryType;
 import org.opensearch.sql.executor.analytics.AnalyticsExecutionEngine;
+import org.opensearch.sql.executor.analytics.TimewrapSignals;
 import org.opensearch.sql.lang.LangSpec;
 import org.opensearch.sql.monitor.profile.ProfileContext;
 import org.opensearch.sql.monitor.profile.QueryProfiling;
 import org.opensearch.sql.plugin.transport.TransportPPLQueryResponse;
+import org.opensearch.sql.ppl.parser.PPLSearchPredicateCompiler;
 import org.opensearch.sql.protocol.response.QueryResult;
 import org.opensearch.sql.protocol.response.format.ResponseFormatter;
 import org.opensearch.sql.protocol.response.format.SimpleJsonResponseFormatter;
@@ -69,6 +72,8 @@ public class RestUnifiedQueryAction {
   private final ClusterService clusterService;
   private final org.opensearch.analytics.EngineContextProvider contextProvider;
   private final org.opensearch.sql.common.setting.Settings pluginSettings;
+  private final PPLSearchPredicateCompiler searchPredicateCompiler =
+      new PPLSearchPredicateCompiler();
 
   public RestUnifiedQueryAction(
       NodeClient client,
@@ -229,19 +234,33 @@ public class RestUnifiedQueryAction {
                     // string, so apply the equivalent top-level limit here before the system cap.
                     plan = addFetchSizeLimit(plan, planContext, fetchSize);
                     plan = addQuerySizeLimit(plan, planContext);
-                    if (profiling) {
-                      analyticsEngine.executeWithProfile(
-                          plan,
-                          planContext,
-                          queryCtx,
-                          createQueryListener(queryType, profileCtx, closingListener));
-                    } else {
-                      analyticsEngine.execute(
-                          plan,
-                          planContext,
-                          queryCtx,
-                          createQueryListener(queryType, profileCtx, closingListener));
-                    }
+                    // An init-plan must not consume or apply parent-result post-processing. Carry
+                    // these signals across the async subquery callback and install them only for
+                    // the final parent execution.
+                    TimewrapSignals finalTimewrap = TimewrapSignals.captureAndClear();
+                    ResponseListener<QueryResponse> queryListener =
+                        createQueryListener(queryType, profileCtx, closingListener);
+                    DynamicSearchExecutor.PlanExecutor subqueryExecutor =
+                        (subquery, subqueryListener) ->
+                            analyticsEngine.execute(
+                                subquery, planContext, queryCtx, subqueryListener);
+                    DynamicSearchExecutor.PlanExecutor finalExecutor =
+                        profiling
+                            ? (bound, finalListener) -> {
+                              finalTimewrap.install();
+                              analyticsEngine.executeWithProfile(
+                                  bound, planContext, queryCtx, finalListener);
+                            }
+                            : (bound, finalListener) -> {
+                              finalTimewrap.install();
+                              analyticsEngine.execute(bound, planContext, queryCtx, finalListener);
+                            };
+                    DynamicSearchExecutor.execute(
+                        plan,
+                        searchPredicateCompiler,
+                        subqueryExecutor,
+                        finalExecutor,
+                        queryListener);
                   } catch (Exception e) {
                     closingListener.onFailure(e);
                   } finally {
@@ -289,14 +308,33 @@ public class RestUnifiedQueryAction {
                 () -> {
                   QueryRequestContext queryCtx =
                       withParentTask(contextProvider.getContext(), parentTask);
-                  try (UnifiedQueryContext context = buildContext(queryType, false, queryCtx)) {
+                  UnifiedQueryContext context = buildContext(queryType, false, queryCtx);
+                  ResponseListener<ExplainResponse> closingListener =
+                      wrapWithContextClose(context, listener);
+                  try {
                     UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
                     RelNode plan = planner.plan(query);
                     CalcitePlanContext planContext = context.getPlanContext();
                     plan = addQuerySizeLimit(plan, planContext);
-                    analyticsEngine.explain(plan, mode, planContext, listener);
+                    DynamicSearchExecutor.bind(
+                        plan,
+                        searchPredicateCompiler,
+                        (subquery, subqueryListener) ->
+                            analyticsEngine.execute(
+                                subquery, planContext, queryCtx, subqueryListener),
+                        new ResponseListener<>() {
+                          @Override
+                          public void onResponse(RelNode bound) {
+                            analyticsEngine.explain(bound, mode, planContext, closingListener);
+                          }
+
+                          @Override
+                          public void onFailure(Exception e) {
+                            closingListener.onFailure(e);
+                          }
+                        });
                   } catch (Exception e) {
-                    listener.onFailure(e);
+                    closingListener.onFailure(e);
                   } finally {
                     // explain plans a timewrap query (visitTimewrap sets thread-locals) but never
                     // executes, so nothing captures-and-clears them — clear here to avoid leaking
@@ -479,5 +517,36 @@ public class RestUnifiedQueryAction {
             LOG.warn("Failed to close query context", e);
           }
         });
+  }
+
+  private static <T> ResponseListener<T> wrapWithContextClose(
+      UnifiedQueryContext context, ResponseListener<T> delegate) {
+    return new ResponseListener<>() {
+      @Override
+      public void onResponse(T response) {
+        try {
+          delegate.onResponse(response);
+        } finally {
+          closeContext(context);
+        }
+      }
+
+      @Override
+      public void onFailure(Exception e) {
+        try {
+          delegate.onFailure(e);
+        } finally {
+          closeContext(context);
+        }
+      }
+    };
+  }
+
+  private static void closeContext(UnifiedQueryContext context) {
+    try {
+      context.close();
+    } catch (Exception e) {
+      LOG.warn("Failed to close query context", e);
+    }
   }
 }

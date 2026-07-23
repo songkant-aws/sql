@@ -8,9 +8,7 @@ package org.opensearch.sql.executor;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.RelTraitDef;
@@ -31,7 +29,9 @@ import org.opensearch.sql.ast.tree.HighlightConfig;
 import org.opensearch.sql.ast.tree.UnresolvedPlan;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.CalciteRelNodeVisitor;
+import org.opensearch.sql.calcite.DynamicSearchPlanBinder;
 import org.opensearch.sql.calcite.OpenSearchSchema;
+import org.opensearch.sql.calcite.SearchPredicateCompiler;
 import org.opensearch.sql.calcite.SysLimit;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit.SystemLimitType;
@@ -45,6 +45,7 @@ import org.opensearch.sql.common.utils.QueryContext;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.exception.CalciteUnsupportedException;
 import org.opensearch.sql.exception.NonFallbackCalciteException;
+import org.opensearch.sql.executor.analytics.TimewrapSignals;
 import org.opensearch.sql.monitor.profile.MetricName;
 import org.opensearch.sql.monitor.profile.ProfileContext;
 import org.opensearch.sql.monitor.profile.ProfileMetric;
@@ -57,15 +58,42 @@ import org.opensearch.sql.planner.physical.PhysicalPlan;
 import org.opensearch.sql.protocol.response.format.Format;
 
 /** The low level interface of core engine. */
-@RequiredArgsConstructor
-@AllArgsConstructor
 @Log4j2
 public class QueryService {
   private final Analyzer analyzer;
   private final ExecutionEngine executionEngine;
   private final Planner planner;
-  private DataSourceService dataSourceService;
-  private Settings settings;
+  private final DataSourceService dataSourceService;
+  private final Settings settings;
+  private final SearchPredicateCompiler searchPredicateCompiler;
+
+  public QueryService(Analyzer analyzer, ExecutionEngine executionEngine, Planner planner) {
+    this(analyzer, executionEngine, planner, null, null, null);
+  }
+
+  public QueryService(
+      Analyzer analyzer,
+      ExecutionEngine executionEngine,
+      Planner planner,
+      DataSourceService dataSourceService,
+      Settings settings) {
+    this(analyzer, executionEngine, planner, dataSourceService, settings, null);
+  }
+
+  public QueryService(
+      Analyzer analyzer,
+      ExecutionEngine executionEngine,
+      Planner planner,
+      DataSourceService dataSourceService,
+      Settings settings,
+      SearchPredicateCompiler searchPredicateCompiler) {
+    this.analyzer = analyzer;
+    this.executionEngine = executionEngine;
+    this.planner = planner;
+    this.dataSourceService = dataSourceService;
+    this.settings = settings;
+    this.searchPredicateCompiler = searchPredicateCompiler;
+  }
 
   @Getter(lazy = true)
   private final CalciteRelNodeVisitor relNodeVisitor = new CalciteRelNodeVisitor(dataSourceService);
@@ -182,7 +210,7 @@ public class QueryService {
                   // Wrap execution with EXECUTING stage tracking
                   StageErrorHandler.executeStageVoid(
                       QueryProcessingStage.EXECUTING,
-                      () -> executionEngine.execute(calcitePlan, context, listener),
+                      () -> executeCalcitePlan(calcitePlan, context, listener),
                       "while running the query");
                 },
                 QueryService.class);
@@ -196,6 +224,32 @@ public class QueryService {
           }
         },
         settings);
+  }
+
+  private void executeCalcitePlan(
+      RelNode plan,
+      CalcitePlanContext context,
+      ResponseListener<ExecutionEngine.QueryResponse> listener) {
+    if (DynamicSearchPlanBinder.find(plan).isEmpty()) {
+      executionEngine.execute(plan, context, listener);
+      return;
+    }
+    if (searchPredicateCompiler == null) {
+      listener.onFailure(
+          new IllegalStateException("No PPL search predicate compiler is configured"));
+      return;
+    }
+    TimewrapSignals finalTimewrap = TimewrapSignals.captureAndClear();
+    DynamicSearchExecutor.execute(
+        plan,
+        searchPredicateCompiler,
+        (subquery, subqueryListener) ->
+            executionEngine.execute(subquery, createInitPlanContext(context), subqueryListener),
+        (bound, finalListener) -> {
+          finalTimewrap.install();
+          executionEngine.execute(bound, context, finalListener);
+        },
+        listener);
   }
 
   public void explainWithCalcite(
@@ -228,11 +282,7 @@ public class QueryService {
                       () -> {
                         RelNode relNode = analyze(plan, context);
                         RelNode calcitePlan = convertToCalcitePlan(relNode, context);
-                        if (format != null) {
-                          executionEngine.explain(calcitePlan, mode, format, context, listener);
-                        } else {
-                          executionEngine.explain(calcitePlan, mode, context, listener);
-                        }
+                        explainCalcitePlan(calcitePlan, context, mode, format, listener);
                       },
                       settings);
                 },
@@ -247,6 +297,56 @@ public class QueryService {
           }
         },
         settings);
+  }
+
+  private void explainCalcitePlan(
+      RelNode plan,
+      CalcitePlanContext context,
+      ExplainMode mode,
+      Format format,
+      ResponseListener<ExecutionEngine.ExplainResponse> listener) {
+    if (DynamicSearchPlanBinder.find(plan).isEmpty()) {
+      explainBoundCalcitePlan(plan, context, mode, format, listener);
+      return;
+    }
+    if (searchPredicateCompiler == null) {
+      listener.onFailure(
+          new IllegalStateException("No PPL search predicate compiler is configured"));
+      return;
+    }
+    DynamicSearchExecutor.bind(
+        plan,
+        searchPredicateCompiler,
+        (subquery, subqueryListener) ->
+            executionEngine.execute(subquery, createInitPlanContext(context), subqueryListener),
+        new ResponseListener<>() {
+          @Override
+          public void onResponse(RelNode bound) {
+            explainBoundCalcitePlan(bound, context, mode, format, listener);
+          }
+
+          @Override
+          public void onFailure(Exception e) {
+            listener.onFailure(e);
+          }
+        });
+  }
+
+  private CalcitePlanContext createInitPlanContext(CalcitePlanContext parent) {
+    return CalcitePlanContext.create(parent.config, parent.sysLimit, parent.queryType);
+  }
+
+  private void explainBoundCalcitePlan(
+      RelNode plan,
+      CalcitePlanContext context,
+      ExplainMode mode,
+      Format format,
+      ResponseListener<ExecutionEngine.ExplainResponse> listener) {
+    if (format != null) {
+      executionEngine.explain(plan, mode, format, context, listener);
+    } else {
+      executionEngine.explain(plan, mode, context, listener);
+    }
   }
 
   public void executeWithLegacy(

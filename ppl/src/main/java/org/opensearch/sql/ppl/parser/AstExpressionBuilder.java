@@ -1034,6 +1034,12 @@ public class AstExpressionBuilder extends OpenSearchPPLParserBaseVisitor<Unresol
 
   // Visitor methods for search expressions
   @Override
+  public SearchExpression visitImplicitSubqueryExpression(
+      OpenSearchPPLParser.ImplicitSubqueryExpressionContext ctx) {
+    return new SearchSubquery(astBuilder.visitSubSearch(ctx.subSearch()));
+  }
+
+  @Override
   public SearchExpression visitGroupedExpression(OpenSearchPPLParser.GroupedExpressionContext ctx) {
     return new SearchGroup((SearchExpression) visit(ctx.searchExpression()));
   }

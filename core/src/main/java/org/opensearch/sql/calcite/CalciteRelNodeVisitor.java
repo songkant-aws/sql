@@ -105,12 +105,19 @@ import org.opensearch.sql.ast.expression.ParseMethod;
 import org.opensearch.sql.ast.expression.PatternMethod;
 import org.opensearch.sql.ast.expression.PatternMode;
 import org.opensearch.sql.ast.expression.QualifiedName;
+import org.opensearch.sql.ast.expression.SearchAnd;
+import org.opensearch.sql.ast.expression.SearchExpression;
+import org.opensearch.sql.ast.expression.SearchGroup;
+import org.opensearch.sql.ast.expression.SearchNot;
+import org.opensearch.sql.ast.expression.SearchOr;
+import org.opensearch.sql.ast.expression.SearchSubquery;
 import org.opensearch.sql.ast.expression.Span;
 import org.opensearch.sql.ast.expression.SpanUnit;
 import org.opensearch.sql.ast.expression.UnresolvedExpression;
 import org.opensearch.sql.ast.expression.WindowFrame;
 import org.opensearch.sql.ast.expression.WindowFrame.FrameType;
 import org.opensearch.sql.ast.expression.WindowFunction;
+import org.opensearch.sql.ast.expression.subquery.RuntimeSearchScalarSubquery;
 import org.opensearch.sql.ast.expression.subquery.SubqueryExpression;
 import org.opensearch.sql.ast.tree.AD;
 import org.opensearch.sql.ast.tree.AddColTotals;
@@ -289,15 +296,72 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
   public RelNode visitSearch(Search node, CalcitePlanContext context) {
     // Visit the Relation child to get the scan
     node.getChild().get(0).accept(this, context);
+    UnresolvedExpression query =
+        node.hasImplicitSubquery()
+            ? buildRuntimeSearchQuery(node.getOriginalExpression(), context)
+            : AstDSL.stringLiteral(node.getQueryString());
     // Create query_string function
     Function queryStringFunc =
-        AstDSL.function(
-            "query_string",
-            AstDSL.unresolvedArg("query", AstDSL.stringLiteral(node.getQueryString())));
+        AstDSL.function("query_string", AstDSL.unresolvedArg("query", query));
     RexNode queryStringRex = rexVisitor.analyze(queryStringFunc, context);
 
     context.relBuilder.filter(queryStringRex);
     return context.relBuilder.peek();
+  }
+
+  /** Builds a query_string operand containing standard scalar subqueries for implicit format. */
+  private UnresolvedExpression buildRuntimeSearchQuery(
+      SearchExpression expression, CalcitePlanContext context) {
+    if (expression instanceof SearchSubquery subquery) {
+      int maxResults = Math.max(0, context.sysLimit.subsearchLimit());
+      Format format =
+          new Format(
+              Format.DEFAULT_MV_SEPARATOR,
+              maxResults,
+              Format.DEFAULT_ROW_PREFIX,
+              Format.DEFAULT_COLUMN_PREFIX,
+              Format.DEFAULT_COLUMN_SEPARATOR,
+              Format.DEFAULT_COLUMN_END,
+              Format.DEFAULT_ROW_SEPARATOR,
+              Format.DEFAULT_ROW_END,
+              Format.DEFAULT_EMPTY_STRING);
+      format.setImplicit(true);
+      format.attach(subquery.getQuery());
+      return new RuntimeSearchScalarSubquery(format);
+    }
+    if (expression instanceof SearchGroup group) {
+      return concatSearch("(", buildRuntimeSearchQuery(group.getExpression(), context), ")");
+    }
+    if (expression instanceof SearchNot not) {
+      return concatSearch("NOT(", buildRuntimeSearchQuery(not.getExpression(), context), ")");
+    }
+    if (expression instanceof SearchAnd and) {
+      return concatSearch(
+          buildRuntimeSearchQuery(and.getLeft(), context),
+          " AND ",
+          buildRuntimeSearchQuery(and.getRight(), context));
+    }
+    if (expression instanceof SearchOr or) {
+      return concatSearch(
+          buildRuntimeSearchQuery(or.getLeft(), context),
+          " OR ",
+          buildRuntimeSearchQuery(or.getRight(), context));
+    }
+    return AstDSL.stringLiteral(expression.toQueryString());
+  }
+
+  private UnresolvedExpression concatSearch(Object... parts) {
+    UnresolvedExpression result = toSearchExpression(parts[0]);
+    for (int i = 1; i < parts.length; i++) {
+      result = AstDSL.function("concat", result, toSearchExpression(parts[i]));
+    }
+    return result;
+  }
+
+  private UnresolvedExpression toSearchExpression(Object part) {
+    return part instanceof UnresolvedExpression expression
+        ? expression
+        : AstDSL.stringLiteral(part.toString());
   }
 
   @Override

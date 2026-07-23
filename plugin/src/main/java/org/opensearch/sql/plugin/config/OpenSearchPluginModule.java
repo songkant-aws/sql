@@ -35,6 +35,7 @@ import org.opensearch.sql.planner.Planner;
 import org.opensearch.sql.planner.optimizer.LogicalPlanOptimizer;
 import org.opensearch.sql.ppl.PPLService;
 import org.opensearch.sql.ppl.antlr.PPLSyntaxParser;
+import org.opensearch.sql.ppl.parser.PPLSearchPredicateCompiler;
 import org.opensearch.sql.sql.SQLService;
 import org.opensearch.sql.sql.antlr.SQLSyntaxParser;
 import org.opensearch.sql.storage.StorageEngine;
@@ -120,7 +121,13 @@ public class OpenSearchPluginModule extends AbstractModule {
             new ExpressionAnalyzer(functionRepository), dataSourceService, functionRepository);
     Planner planner = new Planner(LogicalPlanOptimizer.create());
     QueryService queryService =
-        new QueryService(analyzer, executionEngine, planner, dataSourceService, settings);
+        new QueryService(
+            analyzer,
+            executionEngine,
+            planner,
+            dataSourceService,
+            settings,
+            new PPLSearchPredicateCompiler());
     return new QueryPlanFactory(queryService);
   }
 }
