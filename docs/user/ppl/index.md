@@ -41,6 +41,7 @@ source=accounts
 | [where command](cmd/where.md) | 1.0 | stable (since 1.0) | Filter the search result using boolean expressions. |
 | [subquery command](cmd/subquery.md) | 3.0 | experimental (since 3.0) | Embed one PPL query inside another for complex filtering and data retrieval operations. |
 | [fields command](cmd/fields.md) | 1.0 | stable (since 1.0) | Keep or remove fields from the search result. |
+| [format command](cmd/format.md) | 3.8 | experimental (since 3.8) | Collapse rows and fields into a single search-expression string. |
 | [rename command](cmd/rename.md) | 1.0 | stable (since 1.0) | Rename one or more fields in the search result. |
 | [eval command](cmd/eval.md) | 1.0 | stable (since 1.0) | Evaluate an expression and append the result to the search result. |
 | [convert command](cmd/convert.md) | 3.5 | experimental (since 3.5) | Transform field values to numeric values using specialized conversion functions. |

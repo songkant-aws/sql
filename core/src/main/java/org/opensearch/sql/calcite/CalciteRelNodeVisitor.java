@@ -130,6 +130,7 @@ import org.opensearch.sql.ast.tree.FetchCursor;
 import org.opensearch.sql.ast.tree.FillNull;
 import org.opensearch.sql.ast.tree.Filter;
 import org.opensearch.sql.ast.tree.Flatten;
+import org.opensearch.sql.ast.tree.Format;
 import org.opensearch.sql.ast.tree.GraphLookup;
 import org.opensearch.sql.ast.tree.GraphLookup.Direction;
 import org.opensearch.sql.ast.tree.Head;
@@ -917,6 +918,13 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     }
 
     return context.relBuilder.peek();
+  }
+
+  /** Collapses all user-facing input fields into one Splunk-compatible search expression. */
+  @Override
+  public RelNode visitFormat(Format node, CalcitePlanContext context) {
+    visitChildren(node, context);
+    return new FormatPlanner().plan(node, context);
   }
 
   @Override
