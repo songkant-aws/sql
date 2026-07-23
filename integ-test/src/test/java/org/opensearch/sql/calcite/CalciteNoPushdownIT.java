@@ -38,6 +38,8 @@ import org.opensearch.sql.ppl.PPLIntegTestCase;
   CalciteExpandCommandIT.class,
   CalciteFieldFormatCommandIT.class,
   CalciteFormatCommandIT.class,
+  CalciteForeachCommandIT.class,
+  ForeachFieldJsonIT.class,
   CalciteFieldsCommandIT.class,
   CalciteFillNullCommandIT.class,
   CalciteFlattenCommandIT.class,

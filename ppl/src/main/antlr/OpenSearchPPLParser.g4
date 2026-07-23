@@ -46,6 +46,7 @@ subSearch
 pplCommands
    : describeCommand
    | showDataSourcesCommand
+   | makeresultsCommand
    | searchCommand
    | multisearchCommand
    | graphLookupCommand
@@ -64,6 +65,7 @@ commands
    | dedupCommand
    | sortCommand
    | evalCommand
+   | foreachCommand
    | headCommand
    | binCommand
    | rareTopCommand
@@ -98,6 +100,7 @@ commands
    | formatCommand
    | nomvCommand
    | graphLookupCommand
+   | xyseriesCommand
    | unionCommand
    | timewrapCommand
    ;
@@ -117,6 +120,7 @@ commandName
    | DEDUP
    | SORT
    | EVAL
+   | FOREACH
    | FIELDFORMAT
    | FORMAT
    | HEAD
@@ -152,7 +156,9 @@ commandName
    | NOMV
    | TRANSPOSE
    | GRAPHLOOKUP
+   | XYSERIES
    | TIMEWRAP
+   | MAKERESULTS
    ;
 
 searchCommand
@@ -217,6 +223,16 @@ describeCommand
 
 showDataSourcesCommand
    : SHOW DATASOURCES
+   ;
+
+makeresultsCommand
+   : MAKERESULTS makeresultsArg*
+   ;
+
+makeresultsArg
+   : COUNT EQUAL integerLiteral
+   | FORMAT EQUAL (CSV | JSON)
+   | DATA EQUAL stringLiteral
    ;
 
 whereCommand
@@ -417,6 +433,38 @@ spanLiteral
 
 evalCommand
    : EVAL evalClause (COMMA evalClause)*
+   ;
+
+foreachCommand
+   : FOREACH foreachArgument* LT_SQR_PRTHS foreachEvalCommand RT_SQR_PRTHS
+   ;
+
+foreachArgument
+   : foreachOption
+   | foreachTarget
+   ;
+
+foreachTarget
+   : functionCall
+   | stringLiteral
+   | wcFieldExpression
+   | STAR
+   ;
+
+foreachOption
+   : ident EQUAL (ident | foreachPlaceholder)
+   ;
+
+foreachEvalCommand
+   : EVAL foreachEvalClause (COMMA foreachEvalClause)*
+   ;
+
+foreachEvalClause
+   : target = foreachEvalTarget EQUAL logicalExpression
+   ;
+
+foreachEvalTarget
+   : (foreachPlaceholder | ident | DOT | MODULE)+
    ;
 
 fieldformatCommand
@@ -739,6 +787,19 @@ graphLookupArgs
    | (FILTER EQUAL LT_PRTHS logicalExpression RT_PRTHS)
    ;
 
+xyseriesCommand
+   : XYSERIES xyseriesOption* xField = fieldExpression yNameField = fieldExpression IN LT_PRTHS xyseriesPivotValues RT_PRTHS yDataFields = fieldList
+   ;
+
+xyseriesOption
+   : SEP EQUAL sep = stringLiteral
+   | FORMAT EQUAL format = stringLiteral
+   ;
+
+xyseriesPivotValues
+   : stringLiteral (COMMA stringLiteral)*
+   ;
+
 // clauses
 fromClause
    : SOURCE EQUAL tableOrSubqueryClause
@@ -986,6 +1047,7 @@ valueExpression
    | literalValue                                                                                               # literalValueExpr
    | functionCall                                                                                               # functionCallExpr
    | lambda                                                                                                     # lambdaExpr
+   | foreachPlaceholder                                                                                         # foreachPlaceholderExpr
    | LT_SQR_PRTHS subSearch RT_SQR_PRTHS                                                                        # scalarSubqueryExpr
    | valueExpression NOT? IN LT_SQR_PRTHS subSearch RT_SQR_PRTHS                                                # inSubqueryExpr
    | LT_PRTHS valueExpression (COMMA valueExpression)* RT_PRTHS NOT? IN LT_SQR_PRTHS subSearch RT_SQR_PRTHS     # inSubqueryExpr
@@ -1086,6 +1148,16 @@ fieldExpression
 
 wcFieldExpression
    : wcQualifiedName
+   ;
+
+foreachPlaceholder
+   : LESS LESS foreachPlaceholderName GREATER GREATER
+   ;
+
+foreachPlaceholderName
+   : FIELD
+   | ID
+   | NUMERIC_ID
    ;
 
 selectFieldExpression
@@ -1725,6 +1797,9 @@ searchableKeyWord
    // ARGUMENT KEYWORDS
    | KEEPEMPTY
    | CONSECUTIVE
+   | FORMAT
+   | CSV
+   | DATA
    | DEDUP_SPLITVALUES
    | PARTITIONS
    | ALLNUM
@@ -1820,4 +1895,5 @@ searchableKeyWord
    | MAX_DEPTH
    | DEPTH_FIELD
    | EDGE
+   | SEP
    ;
