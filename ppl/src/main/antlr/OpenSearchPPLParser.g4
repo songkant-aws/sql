@@ -97,6 +97,7 @@ commands
    | replaceCommand
    | mvcombineCommand
    | fieldformatCommand
+   | formatCommand
    | nomvCommand
    | graphLookupCommand
    | xyseriesCommand
@@ -121,6 +122,7 @@ commandName
    | EVAL
    | FOREACH
    | FIELDFORMAT
+   | FORMAT
    | HEAD
    | BIN
    | TOP
@@ -336,6 +338,20 @@ sortCommand
 
 reverseCommand
    : REVERSE
+   ;
+
+formatCommand
+   : FORMAT formatOption* formatDelimiters? formatOption*
+   ;
+
+formatOption
+   : MVSEP EQUAL stringLiteral
+   | MAXRESULTS EQUAL integerLiteral
+   | EMPTYSTR EQUAL stringLiteral
+   ;
+
+formatDelimiters
+   : stringLiteral stringLiteral stringLiteral stringLiteral stringLiteral stringLiteral
    ;
 
 chartCommand
@@ -1807,6 +1823,9 @@ searchableKeyWord
    | COUNTFIELD
    | SHOWCOUNT
    | MAXOUT
+   | MVSEP
+   | MAXRESULTS
+   | EMPTYSTR
    | PATH
    | INPUT
    | OUTPUT
