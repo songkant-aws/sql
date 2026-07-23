@@ -8,7 +8,9 @@ package org.opensearch.sql.executor;
 import java.util.List;
 import java.util.Optional;
 import javax.annotation.Nullable;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.RelTraitDef;
@@ -62,18 +64,16 @@ import org.opensearch.sql.planner.physical.PhysicalPlan;
 import org.opensearch.sql.protocol.response.format.Format;
 
 /** The low level interface of core engine. */
+@RequiredArgsConstructor
+@AllArgsConstructor
 @Log4j2
 public class QueryService {
   private final Analyzer analyzer;
   private final ExecutionEngine executionEngine;
   private final Planner planner;
-  private final DataSourceService dataSourceService;
-  private final Settings settings;
-  private final SearchPredicateCompiler searchPredicateCompiler;
-
-  public QueryService(Analyzer analyzer, ExecutionEngine executionEngine, Planner planner) {
-    this(analyzer, executionEngine, planner, null, null, null);
-  }
+  private DataSourceService dataSourceService;
+  private Settings settings;
+  private SearchPredicateCompiler searchPredicateCompiler;
 
   public QueryService(
       Analyzer analyzer,
@@ -84,23 +84,9 @@ public class QueryService {
     this(analyzer, executionEngine, planner, dataSourceService, settings, null);
   }
 
-  public QueryService(
-      Analyzer analyzer,
-      ExecutionEngine executionEngine,
-      Planner planner,
-      DataSourceService dataSourceService,
-      Settings settings,
-      SearchPredicateCompiler searchPredicateCompiler) {
-    this.analyzer = analyzer;
-    this.executionEngine = executionEngine;
-    this.planner = planner;
-    this.dataSourceService = dataSourceService;
-    this.settings = settings;
-    this.searchPredicateCompiler = searchPredicateCompiler;
-  }
-
   @Getter(lazy = true)
-  private final CalciteRelNodeVisitor relNodeVisitor = new CalciteRelNodeVisitor(dataSourceService);
+  private final CalciteRelNodeVisitor relNodeVisitor =
+      new CalciteRelNodeVisitor(dataSourceService, searchPredicateCompiler);
 
   /** Helper: depending on the type of error, either re-raise or propagate to the listener. */
   private void propagateCalciteError(Throwable t, ResponseListener<?> listener)
@@ -194,7 +180,6 @@ public class QueryService {
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
 
                   context.setHighlightConfig(highlightConfig);
-                  context.setSearchPredicateCompiler(searchPredicateCompiler);
 
                   // Wrap analyze with ANALYZING stage tracking
                   RelNode relNode =
@@ -230,13 +215,13 @@ public class QueryService {
   }
 
   private void executeCalcitePlan(
-      RelNode plan,
+      RelNode calcitePlan,
       CalcitePlanContext context,
       ResponseListener<ExecutionEngine.QueryResponse> listener) {
     try {
       StageErrorHandler.executeStageVoid(
           QueryProcessingStage.EXECUTING,
-          () -> executionEngine.execute(plan, context, listener),
+          () -> executionEngine.execute(calcitePlan, context, listener),
           "while running the query");
     } catch (RuntimeException e) {
       ArithmeticException overflow = findArithmeticOverflow(e);
@@ -274,13 +259,16 @@ public class QueryService {
                       CalcitePlanContext.create(
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
                   context.setHighlightConfig(highlightConfig);
-                  context.setSearchPredicateCompiler(searchPredicateCompiler);
                   context.run(
                       () -> {
                         RelNode relNode = analyze(plan, context);
                         RelNode calcitePlan =
                             withCheckedArithmetic(convertToCalcitePlan(relNode, context), context);
-                        explainCalcitePlan(calcitePlan, context, mode, format, listener);
+                        if (format != null) {
+                          executionEngine.explain(calcitePlan, mode, format, context, listener);
+                        } else {
+                          executionEngine.explain(calcitePlan, mode, context, listener);
+                        }
                       },
                       settings);
                 },
@@ -295,28 +283,6 @@ public class QueryService {
           }
         },
         settings);
-  }
-
-  private void explainCalcitePlan(
-      RelNode plan,
-      CalcitePlanContext context,
-      ExplainMode mode,
-      Format format,
-      ResponseListener<ExecutionEngine.ExplainResponse> listener) {
-    explainBoundCalcitePlan(plan, context, mode, format, listener);
-  }
-
-  private void explainBoundCalcitePlan(
-      RelNode plan,
-      CalcitePlanContext context,
-      ExplainMode mode,
-      Format format,
-      ResponseListener<ExecutionEngine.ExplainResponse> listener) {
-    if (format != null) {
-      executionEngine.explain(plan, mode, format, context, listener);
-    } else {
-      executionEngine.explain(plan, mode, context, listener);
-    }
   }
 
   public void executeWithLegacy(

@@ -63,7 +63,6 @@ public class CalcitePlanContext {
       ThreadLocal.withInitial(() -> true);
 
   @Getter @Setter private HighlightConfig highlightConfig;
-  @Getter @Setter private SearchPredicateCompiler searchPredicateCompiler;
   @Getter @Setter private boolean isResolvingJoinCondition = false;
   @Getter @Setter private boolean isResolvingSubquery = false;
   @Getter @Setter private boolean inCoalesceFunction = false;
@@ -145,7 +144,6 @@ public class CalcitePlanContext {
     this.rexBuilder = parent.rexBuilder; // Share the same rexBuilder
     this.functionProperties = parent.functionProperties;
     this.highlightConfig = parent.highlightConfig;
-    this.searchPredicateCompiler = parent.searchPredicateCompiler;
     this.rexLambdaRefMap = new HashMap<>(); // New map for lambda variables
     this.capturedVariables = new ArrayList<>(); // New list for captured variables
     this.inLambdaContext = true; // Mark that we're inside a lambda

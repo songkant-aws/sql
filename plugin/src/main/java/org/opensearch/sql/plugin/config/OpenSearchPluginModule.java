@@ -127,7 +127,7 @@ public class OpenSearchPluginModule extends AbstractModule {
             planner,
             dataSourceService,
             settings,
-            new PPLSearchPredicateCompiler());
+            PPLSearchPredicateCompiler.INSTANCE);
     return new QueryPlanFactory(queryService);
   }
 }
