@@ -47,7 +47,6 @@ import org.opensearch.sql.ast.tree.HighlightConfig;
 import org.opensearch.sql.ast.tree.UnresolvedPlan;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.CalciteRelNodeVisitor;
-import org.opensearch.sql.calcite.DynamicSearchPlanBinder;
 import org.opensearch.sql.calcite.OpenSearchSchema;
 import org.opensearch.sql.calcite.SearchPredicateCompiler;
 import org.opensearch.sql.calcite.SysLimit;
@@ -65,7 +64,6 @@ import org.opensearch.sql.common.utils.QueryContext;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.exception.CalciteUnsupportedException;
 import org.opensearch.sql.exception.NonFallbackCalciteException;
-import org.opensearch.sql.executor.analytics.TimewrapSignals;
 import org.opensearch.sql.monitor.profile.MetricName;
 import org.opensearch.sql.monitor.profile.ProfileContext;
 import org.opensearch.sql.monitor.profile.ProfileMetric;
@@ -88,6 +86,7 @@ public class QueryService {
   private DataSourceService dataSourceService;
   private Settings settings;
   private ExecutionDispatcher executionDispatcher = new DirectExecutionDispatcher();
+  private SearchPredicateCompiler searchPredicateCompiler;
 
   public QueryService(
       Analyzer analyzer,
@@ -101,7 +100,8 @@ public class QueryService {
         planner,
         dataSourceService,
         settings,
-        new DirectExecutionDispatcher());
+        new DirectExecutionDispatcher(),
+        null);
   }
 
   public QueryService(
@@ -111,12 +111,31 @@ public class QueryService {
       DataSourceService dataSourceService,
       Settings settings,
       ExecutionDispatcher executionDispatcher) {
+    this(
+        analyzer,
+        executionEngine,
+        planner,
+        dataSourceService,
+        settings,
+        executionDispatcher,
+        null);
+  }
+
+  public QueryService(
+      Analyzer analyzer,
+      ExecutionEngine executionEngine,
+      Planner planner,
+      DataSourceService dataSourceService,
+      Settings settings,
+      ExecutionDispatcher executionDispatcher,
+      SearchPredicateCompiler searchPredicateCompiler) {
     this.analyzer = analyzer;
     this.executionEngine = executionEngine;
     this.planner = planner;
     this.dataSourceService = dataSourceService;
     this.settings = settings;
     this.executionDispatcher = executionDispatcher;
+    this.searchPredicateCompiler = searchPredicateCompiler;
   }
 
   @Getter(lazy = true)
@@ -214,6 +233,7 @@ public class QueryService {
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
 
                   context.setHighlightConfig(highlightConfig);
+                  context.setSearchPredicateCompiler(searchPredicateCompiler);
 
                   // Wrap analyze with ANALYZING stage tracking
                   RelNode relNode =
@@ -300,6 +320,7 @@ public class QueryService {
                       CalcitePlanContext.create(
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
                   context.setHighlightConfig(highlightConfig);
+                  context.setSearchPredicateCompiler(searchPredicateCompiler);
                   context.run(
                       () -> {
                         RelNode relNode = analyze(plan, context);

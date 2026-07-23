@@ -129,7 +129,13 @@ public class OpenSearchPluginModule extends AbstractModule {
         new ThreadPoolExecutionDispatcher(nodeClient.threadPool(), settings);
     QueryService queryService =
         new QueryService(
-            analyzer, executionEngine, planner, dataSourceService, settings, executionDispatcher);
+            analyzer,
+            executionEngine,
+            planner,
+            dataSourceService,
+            settings,
+            executionDispatcher,
+            new PPLSearchPredicateCompiler());
     return new QueryPlanFactory(queryService);
   }
 }
