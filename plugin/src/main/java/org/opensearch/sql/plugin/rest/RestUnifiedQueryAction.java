@@ -40,11 +40,9 @@ import org.opensearch.sql.ast.tree.UnresolvedPlan;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.plan.rel.LogicalSystemLimit;
 import org.opensearch.sql.common.response.ResponseListener;
-import org.opensearch.sql.executor.DynamicSearchExecutor;
 import org.opensearch.sql.executor.ExecutionEngine.QueryResponse;
 import org.opensearch.sql.executor.QueryType;
 import org.opensearch.sql.executor.analytics.AnalyticsExecutionEngine;
-import org.opensearch.sql.executor.analytics.TimewrapSignals;
 import org.opensearch.sql.lang.LangSpec;
 import org.opensearch.sql.monitor.profile.ProfileContext;
 import org.opensearch.sql.monitor.profile.QueryProfiling;
@@ -226,41 +224,23 @@ public class RestUnifiedQueryAction {
                   ActionListener<TransportPPLQueryResponse> closingListener =
                       wrapWithContextClose(context, listener);
                   try {
+                    CalcitePlanContext planContext = context.getPlanContext();
+                    planContext.setSearchPredicateCompiler(searchPredicateCompiler);
                     UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
                     RelNode plan = planner.plan(query);
-                    CalcitePlanContext planContext = context.getPlanContext();
                     // PPL fetch_size caps the response to N rows (no cursor) — the V2 path attaches
                     // a `head N` in AstStatementBuilder; the unified path parses only the query
                     // string, so apply the equivalent top-level limit here before the system cap.
                     plan = addFetchSizeLimit(plan, planContext, fetchSize);
                     plan = addQuerySizeLimit(plan, planContext);
-                    // An init-plan must not consume or apply parent-result post-processing. Carry
-                    // these signals across the async subquery callback and install them only for
-                    // the final parent execution.
-                    TimewrapSignals finalTimewrap = TimewrapSignals.captureAndClear();
                     ResponseListener<QueryResponse> queryListener =
                         createQueryListener(queryType, profileCtx, closingListener);
-                    DynamicSearchExecutor.PlanExecutor subqueryExecutor =
-                        (subquery, subqueryListener) ->
-                            analyticsEngine.execute(
-                                subquery, planContext, queryCtx, subqueryListener);
-                    DynamicSearchExecutor.PlanExecutor finalExecutor =
-                        profiling
-                            ? (bound, finalListener) -> {
-                              finalTimewrap.install();
-                              analyticsEngine.executeWithProfile(
-                                  bound, planContext, queryCtx, finalListener);
-                            }
-                            : (bound, finalListener) -> {
-                              finalTimewrap.install();
-                              analyticsEngine.execute(bound, planContext, queryCtx, finalListener);
-                            };
-                    DynamicSearchExecutor.execute(
-                        plan,
-                        searchPredicateCompiler,
-                        subqueryExecutor,
-                        finalExecutor,
-                        queryListener);
+                    if (profiling) {
+                      analyticsEngine.executeWithProfile(
+                          plan, planContext, queryCtx, queryListener);
+                    } else {
+                      analyticsEngine.execute(plan, planContext, queryCtx, queryListener);
+                    }
                   } catch (Exception e) {
                     closingListener.onFailure(e);
                   } finally {
@@ -312,27 +292,12 @@ public class RestUnifiedQueryAction {
                   ResponseListener<ExplainResponse> closingListener =
                       wrapWithContextClose(context, listener);
                   try {
+                    CalcitePlanContext planContext = context.getPlanContext();
+                    planContext.setSearchPredicateCompiler(searchPredicateCompiler);
                     UnifiedQueryPlanner planner = new UnifiedQueryPlanner(context);
                     RelNode plan = planner.plan(query);
-                    CalcitePlanContext planContext = context.getPlanContext();
                     plan = addQuerySizeLimit(plan, planContext);
-                    DynamicSearchExecutor.bind(
-                        plan,
-                        searchPredicateCompiler,
-                        (subquery, subqueryListener) ->
-                            analyticsEngine.execute(
-                                subquery, planContext, queryCtx, subqueryListener),
-                        new ResponseListener<>() {
-                          @Override
-                          public void onResponse(RelNode bound) {
-                            analyticsEngine.explain(bound, mode, planContext, closingListener);
-                          }
-
-                          @Override
-                          public void onFailure(Exception e) {
-                            closingListener.onFailure(e);
-                          }
-                        });
+                    analyticsEngine.explain(plan, mode, planContext, closingListener);
                   } catch (Exception e) {
                     closingListener.onFailure(e);
                   } finally {

@@ -119,7 +119,7 @@ import org.opensearch.sql.ast.expression.UnresolvedExpression;
 import org.opensearch.sql.ast.expression.WindowFrame;
 import org.opensearch.sql.ast.expression.WindowFrame.FrameType;
 import org.opensearch.sql.ast.expression.WindowFunction;
-import org.opensearch.sql.ast.expression.subquery.RuntimeSearchScalarSubquery;
+import org.opensearch.sql.ast.expression.subquery.ScalarSubquery;
 import org.opensearch.sql.ast.expression.subquery.SubqueryExpression;
 import org.opensearch.sql.ast.tree.AD;
 import org.opensearch.sql.ast.tree.AddColTotals;
@@ -315,6 +315,11 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     RexNode queryStringRex = rexVisitor.analyze(queryStringFunc, context);
 
     context.relBuilder.filter(queryStringRex);
+    if (node.hasImplicitSubquery()) {
+      context.relBuilder.push(
+          RuntimeSearchCorrelator.correlate(
+              context.relBuilder.build(), context.getSearchPredicateCompiler()));
+    }
     return context.relBuilder.peek();
   }
 
@@ -336,7 +341,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
               Format.DEFAULT_EMPTY_STRING);
       format.setImplicit(true);
       format.attach(subquery.getQuery());
-      return new RuntimeSearchScalarSubquery(format);
+      return new ScalarSubquery(format);
     }
     if (expression instanceof SearchGroup group) {
       return concatSearch("(", buildRuntimeSearchQuery(group.getExpression(), context), ")");

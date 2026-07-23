@@ -35,7 +35,6 @@ import org.opensearch.sql.ast.tree.HighlightConfig;
 import org.opensearch.sql.ast.tree.UnresolvedPlan;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.calcite.CalciteRelNodeVisitor;
-import org.opensearch.sql.calcite.DynamicSearchPlanBinder;
 import org.opensearch.sql.calcite.OpenSearchSchema;
 import org.opensearch.sql.calcite.SearchPredicateCompiler;
 import org.opensearch.sql.calcite.SysLimit;
@@ -51,7 +50,6 @@ import org.opensearch.sql.common.utils.QueryContext;
 import org.opensearch.sql.datasource.DataSourceService;
 import org.opensearch.sql.exception.CalciteUnsupportedException;
 import org.opensearch.sql.exception.NonFallbackCalciteException;
-import org.opensearch.sql.executor.analytics.TimewrapSignals;
 import org.opensearch.sql.monitor.profile.MetricName;
 import org.opensearch.sql.monitor.profile.ProfileContext;
 import org.opensearch.sql.monitor.profile.ProfileMetric;
@@ -196,6 +194,7 @@ public class QueryService {
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
 
                   context.setHighlightConfig(highlightConfig);
+                  context.setSearchPredicateCompiler(searchPredicateCompiler);
 
                   // Wrap analyze with ANALYZING stage tracking
                   RelNode relNode =
@@ -237,7 +236,7 @@ public class QueryService {
     try {
       StageErrorHandler.executeStageVoid(
           QueryProcessingStage.EXECUTING,
-          () -> executeDynamicSearchPlan(plan, context, listener),
+          () -> executionEngine.execute(plan, context, listener),
           "while running the query");
     } catch (RuntimeException e) {
       ArithmeticException overflow = findArithmeticOverflow(e);
@@ -247,32 +246,6 @@ public class QueryService {
       }
       throw e;
     }
-  }
-
-  private void executeDynamicSearchPlan(
-      RelNode plan,
-      CalcitePlanContext context,
-      ResponseListener<ExecutionEngine.QueryResponse> listener) {
-    if (DynamicSearchPlanBinder.find(plan).isEmpty()) {
-      executionEngine.execute(plan, context, listener);
-      return;
-    }
-    if (searchPredicateCompiler == null) {
-      listener.onFailure(
-          new IllegalStateException("No PPL search predicate compiler is configured"));
-      return;
-    }
-    TimewrapSignals finalTimewrap = TimewrapSignals.captureAndClear();
-    DynamicSearchExecutor.execute(
-        plan,
-        searchPredicateCompiler,
-        (subquery, subqueryListener) ->
-            executionEngine.execute(subquery, createInitPlanContext(context), subqueryListener),
-        (bound, finalListener) -> {
-          finalTimewrap.install();
-          executionEngine.execute(bound, context, finalListener);
-        },
-        listener);
   }
 
   public void explainWithCalcite(
@@ -301,6 +274,7 @@ public class QueryService {
                       CalcitePlanContext.create(
                           buildFrameworkConfig(), SysLimit.fromSettings(settings), queryType);
                   context.setHighlightConfig(highlightConfig);
+                  context.setSearchPredicateCompiler(searchPredicateCompiler);
                   context.run(
                       () -> {
                         RelNode relNode = analyze(plan, context);
@@ -329,35 +303,7 @@ public class QueryService {
       ExplainMode mode,
       Format format,
       ResponseListener<ExecutionEngine.ExplainResponse> listener) {
-    if (DynamicSearchPlanBinder.find(plan).isEmpty()) {
-      explainBoundCalcitePlan(plan, context, mode, format, listener);
-      return;
-    }
-    if (searchPredicateCompiler == null) {
-      listener.onFailure(
-          new IllegalStateException("No PPL search predicate compiler is configured"));
-      return;
-    }
-    DynamicSearchExecutor.bind(
-        plan,
-        searchPredicateCompiler,
-        (subquery, subqueryListener) ->
-            executionEngine.execute(subquery, createInitPlanContext(context), subqueryListener),
-        new ResponseListener<>() {
-          @Override
-          public void onResponse(RelNode bound) {
-            explainBoundCalcitePlan(bound, context, mode, format, listener);
-          }
-
-          @Override
-          public void onFailure(Exception e) {
-            listener.onFailure(e);
-          }
-        });
-  }
-
-  private CalcitePlanContext createInitPlanContext(CalcitePlanContext parent) {
-    return CalcitePlanContext.create(parent.config, parent.sysLimit, parent.queryType);
+    explainBoundCalcitePlan(plan, context, mode, format, listener);
   }
 
   private void explainBoundCalcitePlan(
