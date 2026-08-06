@@ -1040,7 +1040,7 @@ public class CalciteRelNodeVisitor extends AbstractNodeVisitor<RelNode, CalciteP
     return context.relBuilder.peek();
   }
 
-  /** Collapses all user-facing input fields into one Splunk-compatible search expression. */
+  /** Collapses all user-facing input fields into one search expression. */
   @Override
   public RelNode visitFormat(Format node, CalcitePlanContext context) {
     visitChildren(node, context);
